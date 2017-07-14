@@ -1,0 +1,48 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cu;cpp;c;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="include">
+      <UniqueIdentifier>{49d47966-f3d4-4bce-b42d-0cda44d0fb58}</UniqueIdentifier>
+      <Extensions>h</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ssd_fft_gpu_GUI.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="clahe.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\src\AOCLUtils\opencl.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\common\src\AOCLUtils\options.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\ssd_fft_gpu.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="ssd_fft_gpu_common.h">
+      <Filter>include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="ssd_fft_gpu_kernel.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
+    <CudaCompile Include="ssd_fft_gpu_main.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ssd_fft_gpu_kernel.cl">
+      <Filter>src</Filter>
+    </None>
+  </ItemGroup>
+</Project>
