@@ -1,0 +1,382 @@
+https://www.sharcnet.ca/help/index.php/Porting_CUDA_to_OpenCL
+http://developer.amd.com/tools-and-sdks/opencl-zone/opencl-resources/introductory-tutorial-to-opencl/
+
+Altera FPGA
+http://design.altera.com/New2FPGAeBook
+https://www.altera.com/support/training/catalog.html
+https://www.altera.com/content/dam/altera-www/global/en_US/pdfs/literature/wp/wp-01173-opencl.pdf
+https://www.altera.com/en_US/pdfs/literature/hb/opencl-sdk/aocl-best-practices-guide.pdf
+https://www.altera.com/support/training/course/oopncl200.html
+Important concept about the structure and optimization:
+https://www.altera.com/en_US/pdfs/literature/wp/wp-201406-acceleware-opencl-on-fpgas-for-gpu-programmers.pdf
+https://www.altera.com/ja_JP/pdfs/literature/hb/opencl-sdk/aocl_programming_guide.pdf
+
+
+http://halide-lang.org/
+Learn OpenCL: https://handsonopencl.github.io/
+OpenCL ref: https://www.khronos.org/files/opencl-1-1-quick-reference-card.pdf
+https://github.com/HandsOnOpenCL/Lecture-Slides/releases
+Book for OpenCL: https://www.amazon.com/OpenCL-Action-Accelerate-Graphics-Computations/dp/1617290173/ref=sr_1_1?s=books&ie=UTF8&qid=1491947223&sr=1-1&keywords=opencl
+
+March
+Setup workstation, Ubuntu 16.04/ ROS, read template-based papers, try looking into Dr.Pinar’s code
+
+April week1
+
+Evaluation Of Contrast Limited Adaptive Histogram Equalization (CLAHE) Enhancement on a FPGA: https://pdfs.semanticscholar.org/bce0/59d3cd6c2b620e1dfa14342a663968ebd78b.pdf
+
+Real-time processing of contrast limited adaptive histogram equalization on FPGA: http://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=5694237
+
+Tried setting up window10 in virtualbox for Visual Studio but have many bugs
+Would just run Visual Studio on my laptop for now since dual system could be problematic sometime.
+
+April week2
+OpenCL ref: https://www.khronos.org/files/opencl-1-1-quick-reference-card.pdf
+
+Tried installing Intel SDK for openCL but doesn’t fully support Ubuntu 16.04, bugs exist
+Tried installing openCL for Nvidia GPU, same boot-loop problem, solved by Ubuntu’s autoinstall driver but then not sure if installed correctly 
+Looks like they really don’t like Ubuntu, Altera SDK only support window and red hat.
+
+Altera online courses Introduction to Parallel Computing with OpenCL on FPGAs(OOPNCL100)
+
+OpenCL in action by Matthew Scarpino 
+Talks about FFT implementation using OpenCL in section 14, which is what we will be doing in the template-based algorithm.
+
+Convolution Neural Network CNN Implementation on Altera FPGA using OpenCL: https://www.youtube.com/watch?v=78Qd5t-Mn0s
+
+https://www.ig.fpms.ac.be/sites/default/files/ICIAR2014_Spine_Localization.pdf
+
+OpenCL Optimization Techniques: Image Processing Algorithm Example
+(OOPNCLIMAGEPROC)
+Altera FPGA support "channel” which are low latency communication path between kernels
+
+April week3
+Met with Pinar, discuss about the project and taught me stuff about CUDA.
+
+what do you want to measure and how will you measure it? how will that measurement allow you to compare vs. different platforms?
+
+April week4
+
+Try to run pinar’s code, lots of issues, due to the old version of the code and difference setting of environment 
+http://stackoverflow.com/questions/14038589/what-is-the-canonical-way-to-check-for-errors-using-the-cuda-runtime-api
+
+https://askubuntu.com/questions/889015/cant-install-cuda-8-but-have-correct-nvidia-driver-ubuntu-16
+
+4/26 ‘nvcc.exe’ is not recognized as an internal or external command...
+
+
+Arria 10 PowerPlay Early Power Estimator:
+https://www.altera.com/support/support-resources/operation-and-testing/power/a10-power-estimator.html
+Power Analysis:
+https://www.altera.com/support/training/course/odswpwr1.html
+
+Met with Pinar, she taught me about the code, and we tried to let it run but it’s very messy trying to use old version of cuda and visual studio. Many library are outdated and some need to find 32 bit version. We managed to make part of it compile. Later on we will build it on the newest version of cuda. 
+what do you want to measure and how will you measure it? how will that measurement allow you to compare vs. different platforms?
+Power consumption under the same computing power (processed frame rate, number of blocks and threads, accuracy)
+ Computing power under the same power consumption
+Maximum computing power 
+ Difficulty of coding and optimization
+
+May week 1
+Start migrating code to win10 on my workstation.
+Lots of problem with converting to cuda 8.0, libraries, function calls... etc.
+While cuda 8.0 doesn’t support visual studio 2017, microsoft doesn’t allow you download  VS2015 unless you subscribe for a fee….. So have to find a way to build cuda 8.0 on VS2017 and hope it doesn’t crash.
+https://www.olegtarasov.me/how-to-build-cuda-toolkit-projects-in-visual-studio-2017/
+https://bohipat.wordpress.com/2014/07/11/replacing-cutil-in-cuda-5-0/
+
+Combined the ssd_fft_gpu and ssd_fft_gpu_GUI to one project since we don’t need to generate the .dll anymore.
+Got it running after a lot of bugs during migration from VS2008 32bit to VS2017 64bit. Still missing composite filter’s data and only have US road video.
+
+May week 2
+
+Resize the composite filters so the newer version CUDA won’t complain.
+The detection seems fine, but the correct rate seems a little off, compare to Pinar’s paper.
+
+May week 3
+
+Cyclone V GT arrived. Driver version was old compare to the new Quartus 17 which can compile OpenCL while the default one for Cyclone V can’t. 
+
+Installation BUGS:
+
+For Altera OpenCL SDK:
+Run "aocl install" it will returned success for both kernel driver and board driver. 
+But then if I run "aocl diagnose" it will return 
+
+Unable to open the kernel mode driver.
+
+Please make sure you have properly installed the driver. To install the driver, run
+aocl install
+
+For C5GT kit:
+The Board Test System from the kit installation failed to launch without any error message, nothing showed up when I double click it. I tried Win8/Win7 compatible mode, didn't work.
+
+Cyclone V GT kit doesn’t come with OpenCL SDK license.
+
+Cyclone V GT board was not specified in the AOCL SDK, only the Cyclone V Soc.
+I found an specification for Cyclone V GT, but it’s only for Linux.
+
+-------------------------------------------------------------------------------------------------
+Tried to install driver(s) on Ubuntu 16.04
+Quartus 17.0 worked fine, but the USB Blaster was available for RedHat only.
+
+OpenCL SDK
+
+aocl install
+aocl install: Running install from /home/matthew/intelFPGA/17.0/hld/board/c5gt/linux64/libexec
+./make_all.sh: 3: export: /bin:/opt/ros/kinetic/bin:/usr/local/cuda-8.0/bin:/usr/local/MATLAB/R2017a/bin/:/home/matthew/bin:/home/matthew/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin: bad variable name
+modprobe: ERROR: could not insert 'aclpci_drv': Exec format error
+Couldn't create directory '/opt/Intel'
+ERROR: Permission denied
+Unable to set up FCD. Please contact your board vendor or see section "Linking Your Host Application to the Khronos ICD Loader Library" of the Programming Guide for instructions on manual setup.
+
+
+-------------------------------------------------------------------------------------------------
+
+May week 4
+Got the OpenCL license from John.
+Haven’t written the board support package for Cyclone V GT yet.
+Try to run emulator
+Run “vcvar64.bat”
+(other wise it would have error: fatal error LNK1181: cannot open input file 'msvcrt.lib')
+Run “aoc -march=emulator device\hello_world.cl -o bin\hello_world.aocx “
+Got error message: 
+   Creating library libkernel.lib and object libkernel.exp
+libkernel.obj : error LNK2019: unresolved external symbol printf referenced in function hello_world
+libkernel.dll : fatal error LNK1120: 1 unresolved externals
+
+Found someone had the same problem: https://www.alteraforum.com/forum/showthread.php?t=46646
+But after following all the instructions in the discussions, still can’t resolve the problem. 
+
+But if I try to compile the code for the board (not emulator), then it will generate other errors, nothing related to the unresolved external symbol .
+"Code path doesn't support quarter-rate yet"
+"Error: system.board.pcie: Selected device family :Cyclone V is not supported"
+“Cyclone V is not supported” even when I specified the board to be s5_ref
+
+
+
+ aoc -march=emulator device\hello_world.cl -o bin\hello_world.aocx
+=> unresolved external symbol printf 
+
+ aoc device\hello_world.cl -o bin\hello_world.aocx
+=>"Code path doesn't support quarter-rate yet"
+"Error: system.board.pcie: Selected device family :Cyclone V is not supported"
+
+Comment out // printf in hello_world.cl
+ aoc -march=emulator device\hello_world.cl -o bin\hello_world.aocx
+=> no error
+Run host.exe
+=>Could not load board library C:\intelFPGA\17.0\hld\board\s5_ref\windows64\bin\altera_a10_ref_mmd.dll
+
+ aoc device\hello_world.cl -o bin\hello_world.aocx
+Error: Compiler Error, not able to generate hardware
+
+Guess because I didn’t have the board package installed yet
+
+June week 1
+Installed Visual Studio 2013, use the toolkit set by “.../VC/12.0/vcvars64.bat”
+(use original command prompt not powershell, can’t work that way)
+
+aoc -march=emulator device\vector_add.cl -o bin\vector_add.aocx
+aoc: This release of Intel(R) FPGA SDK for OpenCL(TM) on A10/S10 requires Quartus Prime Pro Edition. However, the following version was found:
+Quartus Prime Shell
+Version 17.0.0 Build 595 04/25/2017 SJ Standard Edition
+Copyright (C) 2017  Intel Corporation. All rights reserved.
+To call kernel:
+// Create the program for all device. Use the first device as the
+  // representative device (assuming all device are of the same type).
+  std::string binary_file = getBoardBinaryFile("vector_add", device[0]);
+  printf("Using AOCX: %s\n", binary_file.c_str());
+  program = createProgramFromBinary(context, binary_file.c_str(), device, num_devices);
+
+  // Build the program that was just created.
+  status = clBuildProgram(program, 0, NULL, "", NULL, NULL);
+  checkError(status, "Failed to build program");
+
+  // Create per-device objects.
+  queue.reset(num_devices);
+  kernel.reset(num_devices);
+  n_per_device.reset(num_devices);
+#if USE_SVM_API == 0
+  input_a_buf.reset(num_devices);
+  input_b_buf.reset(num_devices);
+  output_buf.reset(num_devices);
+#endif /* USE_SVM_API == 0 */
+
+  for(unsigned i = 0; i < num_devices; ++i) {
+    // Command queue.
+    queue[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+    checkError(status, "Failed to create command queue");
+
+    // Kernel.
+    const char *kernel_name = "vector_add";
+    kernel[i] = clCreateKernel(program, kernel_name, &status);
+    checkError(status, "Failed to create kernel");
+
+    // Determine the number of elements processed by this device.
+    n_per_device[i] = N / num_devices; // number of elements handled by this device
+
+    // Spread out the remainder of the elements over the first
+    // N % num_devices.
+    if(i < (N % num_devices)) {
+      n_per_device[i]++;
+    }
+
+status = clEnqueueNDRangeKernel(queue[i], kernel[i], 1, NULL,
+        &global_work_size, NULL, 2, write_event, &kernel_event[i]);
+Speed sign detection (ssd_fft_GUI_combine) crashed because of conflict between VS2017 and VS2013…
+Need VS2013 for the emulator, so I’ll deal with this problem later on...
+
+Tried the example of Multithread Vector Operation
+Can only compile on VS2013
+https://stackoverflow.com/questions/30412951/unresolved-external-symbol-imp-fprintf-and-imp-iob-func-sdl2
+
+June week 3
+Fixed FFT example according to:
+https://www.altera.com/content/dam/altera-www/global/en_US/pdfs/literature/hb/opencl-sdk/aocl_programming_guide.pdf
+Rebranded read_channel_altera to read_channel_intel. 
+Rebranded write_channel_altera to write_channel_intel. 
+Rebranded read_channel_nb_altera to read_channel_nb_intel. 
+Rebranded write_channel_nb_altera to write_channel_nb_intel. 
+Rebranded clGetBoardExtensionFuncationAddressAltera to clGetBoardExensionFunctionAdressIntelFPGA.
+
+If the error: “a10_ref_mmd.dll was not found” apears, copye the dll(s) into the directory.
+
+
+Simplified pinar’s ssd_fft code for easier transformation.  Delete the testing code.
+ssd_fft_GUI: read in frames, initiate GL window/settings, call kernel ”ssd_fft_gpu_init()” and “ssd_fft_gpu_returnBestTpl”.
+ssd_fft_gpu_init(): read in filters, compute size, create fft plans.
+ssd_fft_gpu_returnBestTpl: 
+ssd_fft_main: contain ssd_fft_gpu_init, do FFTs.
+ssd_fft_kernel: contain k-th law, gamma correction.
+
+
+
+
+
+
+
+
+
+
+
+July week 1
+
+Found solution for clahe not working properly
+https://theperfectmixture.wordpress.com/2012/03/28/clahe-in-opencv-removing-the-seg-fault/
+
+
+
+More memory error:
+
+#ifdef COPYBACKAFTERDEADFIX
+	//only for visualization purposes. no need to optimize below code with kernels.
+	cufftReal* h_afScnOut = (cufftReal*)malloc(giScnMemSzReal);
+	CUDA_SAFE_CALL(cudaMemcpy(h_afScnOut, d_afPadScnIn, giScnMemSzReal, cudaMemcpyDeviceToHost));
+	for (int i = 0; i < giScnSz; i++)
+		acScn[i + giScnOffset] = (unsigned char)h_afScnOut[i];
+	free(h_afScnOut);
+#endif
+
+cufftReal* h_afScnClahe = (cufftReal*)malloc(giScnMemSzReal);
+	CUDA_SAFE_CALL(cudaMemcpy(h_afScnClahe, d_afPadScnIn, giScnMemSzReal, cudaMemcpyDeviceToHost));
+	unsigned char* acScnClahe = (unsigned char*)malloc(giScnMemSzUChar);
+	for (int i = 0; i < giScnSz; i++)
+		{acScnClahe[i] = (unsigned char)h_afScnClahe[i];}
+
+The same “cudaMemcpy” from the same src but the second one will generate error:
+0xC0000005: Access violation reading location 0xFFFFFFFFFFFFFFFF. 
+
+Marked out the first one: COPYBACKAFTERDEADFIX and the error was gone.(***)
+
+
+
+July week 2
+Call OpenCL kernels in the original ssd_fft_gpu code, works well with emulator. So now it’s C++, CUDA and OpenCL, where CL runs on emulator.
+Start to develope CL kernels.
+
+The SVM API in design example have bug that cause it to crash without error message. Will report to Altera.
+
+Set working directory to x64/Debug $targetDir so it can use the same setting as the emulator
+
+Move kernel kthLaw() from CUDA to OpenCL:
+powf->pow
+atan2f->atan2
+cufftComplex* -> __global float2*
+.aocx file compiled.
+
+Memory leak using emulaotr:
+https://alteraforum.com/forum/showthread.php?t=56081&p=228175#post228175
+
+
+July week 3
+
+kthLaw working OpenCL Done
+
+pointWiseMul working on OpenCL Done
+
+ComplexScale working on OpenCL Done
+
+convertChar4ToFloatDoConGam working on OpenCL 
+Because cudaMemcpyToSymbol doesn’t have a direct conversion to OpenCL, set the bConGam=0 now, otherwise it won’t work
+Use clEnqueWriteBuffer with CL_MEM_READ_ONLY 
+
+
+July week 4
+
+//no video input, process the scn from file(***)
+
+Got fixDeadPixel woking on OpenCL as well
+	This kernel is modified havely (e.g. for loop for blocks and threads, __share__ to __local), right now I have no way to find if it’s working as intended.(***)
+
+max_k wokring on OpneCL Done
+
+Augest week 1
+
+Start building FFT engine
+Use clEnqueueFillBuffer() to pad zeros
+Looking at some solutions: 
+Use the design example 2d FFT from Atlera, have to do zero-padding
+Try to implement clfft library to aocl. Not sure if it possible at the moment, have to find source code since it have to be compile by aoc
+ Write a basic 2d fft kernel from the beginning
+ FFTW, compile time determine the structure of FFT so no padding needed,  fast but hard to implement 
+
+https://liu.diva-portal.org/smash/get/diva2:602884/FULLTEXT01.pdf
+http://web.ipac.caltech.edu/staff/fmasci/home/astro_refs/Digital_Image_Processing_2ndEd.pdf
+http://www.fftw.org/fftw-paper-icassp.pdf
+http://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=6737132
+
+
+
+Augest week 2 
+Use clEnqueueCopyBufferRect to pad scene/template to appropriate size
+Build FFT engine using altera design example
+Pad the scene to 1024*512
+Read videos->FFT->inversFFT->check output
+
+
+For fetch:
+	First iteration: launch half kernels
+	Second iteration: LOGN=LOGN-1, launch half kernels
+
+
+Original launched: N threads in a group, N/8 groups
+Make it 1 threads in a group, N/8 groups, 1 thread iterates through N (*8) elements
+Because of shared local memory, can’t do all serial code.
+ 
+ for(idx=0; idx<N; idx++)
+ get_global id(0) = idx + get_global_id(0)*N
+ get_global id(0) = idx
+	
+
+KISS FFT  may be useful if everything else went down….
+
+
+
+
+
+
+Augest week 3 
+Need to pad everything in the first pass to 1024x1024, second pass to 64x64(*) 
+The padding in Pinar’s code:
+778: CUDA_SAFE_CALL(cudaMemcpy2D(d_afPadTplIn,... pad template to scene size
+1483: cudaMemcpy2D(gd_afScnPartIn, giTplWMemSz,... pad the located part scene to giTplWMemSz
