@@ -1,44 +1,4 @@
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////// AOCL
-#include <assert.h>
-#include <stdlib.h>
-#include <math.h>
-#include <cstring>
-#include "CL/opencl.h"
-#include "AOCLUtils/aocl_utils.h"
 
-using namespace aocl_utils;
-
-#define STRING_BUFFER_LEN 1024
-
-// Runtime constants
-// Used to define the work set over which this kernel will execute.
-static const size_t work_group_size = 8;  // 8 threads in the demo workgroup
-										  // Defines kernel argument value, which is the workitem ID that will
-										  // execute a printf call
-static const int thread_id_to_output = 2;
-
-// OpenCL runtime configuration
-static cl_platform_id platform = NULL;
-static cl_device_id device = NULL;
-static cl_context context = NULL;
-static cl_command_queue queue = NULL;
-static cl_kernel kthLaw_kernel = NULL; 
-static cl_kernel pointWiseMul_kernel = NULL;
-static cl_kernel ComplexScale_kernel = NULL;
-static cl_kernel convertChar4ToFloatDoConGam_kernel = NULL;
-static cl_kernel fixDeadPixels_kernel = NULL; 
-static cl_kernel max_k_kernel = NULL;
-static cl_program program = NULL;
-
-// Function prototypes
-bool init();
-void AOCLcleanup();
-static void device_info_ulong(cl_device_id device, cl_device_info param, const char* name);
-static void device_info_uint(cl_device_id device, cl_device_info param, const char* name);
-static void device_info_bool(cl_device_id device, cl_device_info param, const char* name);
-static void device_info_string(cl_device_id device, cl_device_info param, const char* name);
-static void display_device_info(cl_device_id device);
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //#define US_SIGNS
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,16 +35,13 @@ int CLAHE(unsigned char* pImage, unsigned int uiXRes, unsigned int uiYRes, unsig
 	unsigned int uiNrBins, float fCliplimit);
 
 #define gd_afCompFlt(iIPIndx, iSzIndx, iFltIndx)  gd_afCompFlt + ((giTplH * giTplW * giNumIPRot * giNumSz) * iFltIndx) +  ((giTplH * giTplW * giNumIPRot) * iSzIndx) + ((giTplH * giTplW) * iIPIndx)
-#define d_pafWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) d_pafWholeTplFFT + ((giScnH * giScnW * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnH * giScnW * giNumIPInFirst) * iSzIndx) + ((giScnH * giScnW) * iIPAbsIndx)
-#define gd_afWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) gd_afWholeTplFFT + ((giScnH * giScnW * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnH * giScnW * giNumIPInFirst) * iSzIndx) + ((giScnH * giScnW) * iIPAbsIndx)
+#define d_pafWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) d_pafWholeTplFFT + ((giScnHPad * giScnWPad * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnHPad * giScnWPad * giNumIPInFirst) * iSzIndx) + ((giScnHPad * giScnWPad) * iIPAbsIndx)
+#define gd_afWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) gd_afWholeTplFFT + ((giScnHPad * giScnWPad * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnHPad * giScnWPad * giNumIPInFirst) * iSzIndx) + ((giScnHPad * giScnWPad) * iIPAbsIndx)
 #define d_pafPartTplFFT(iIPIndx, iSzIndx, iFltIndx) d_pafPartTplFFT + ((giTplH * giTplW * giNumIPRot * giNumSz) * iFltIndx) + ((giTplH * giTplW * giNumIPRot) * iSzIndx) + ((giTplH * giTplW) * iIPIndx)
 #define gd_afPartTplFFT(iIPIndx, iSzIndx, iFltIndx) gd_afPartTplFFT + ((giTplH * giTplW * giNumIPRot * giNumSz) * iFltIndx) + ((giTplH * giTplW * giNumIPRot) * iSzIndx) + ((giTplH * giTplW) * iIPIndx)
 ////////////////////////////////////////////////////////////////////////////////
 // Global vars
 ////////////////////////////////////////////////////////////////////////////////
-cl_int status;
-size_t wgSize[3] = { 1, 1, 1 };
-size_t gSize[3] = { 1, 1, 1 };
 //trashold for the PSR (might be different for day and night)
 //const float gfPSRTrashold = 8.0f;
 const float gfPSRTrashold = 7.5f;
@@ -133,15 +90,18 @@ const int giAreaH = 20;
 const int giMaskH = 4;
 
 const int	giScnSz = giScnW * giScnH;
+const int	giScnSzPad = giScnWPad * giScnHPad;
 const int	giScnMemSzReal = giScnSz * sizeof(cufftReal);
+const int	giScnMemSzRealPad = giScnSzPad * sizeof(cufftReal);//1024*1024
 const int   giScnMemSzCmplx = giScnSz * sizeof(cufftComplex);
+const int   giScnMemSzCmplxPad = giScnSzPad * sizeof(cufftComplex);//1024*1024
 const int   giScnMemSzUChar = giScnSz * sizeof(unsigned char);
 const int	giAreaMemSzReal = giAreaH * giAreaH * sizeof(cufftReal);
 const int	giScnOffset = giScnBegY * giScnW;
 const int   giOrigScnMemSzUChar = giOrigScnSz * sizeof(unsigned char);
 
 //directory where scene and templates are
-char g_sPathBegin[50] = "../../cpuResults/";
+char g_sPathBegin[50] = "cpuResults/";
 char g_sPath[100];
 //directory where stats files will be stored
 char g_sStatsPathBegin[50] = "../stats/ssd_gpu_stats/fft_results/";
@@ -151,7 +111,7 @@ FILE* g_fStatsFile;
 #ifdef US_SIGNS
 char g_sScnBinPathBegin[50] = "../convert_pgm_to_RawVideo/raw/";
 #else
-char g_sScnBinPathBegin[60] = "../../../copied15May17/EU_raw(savedRealisFilesAsBin)/";
+char g_sScnBinPathBegin[50] = "../copied15May17/EU_raw(savedRealisFilesAsBin)/";
 #endif
 char g_sScnBinPath[100];
 FILE* g_fScnBin;
@@ -223,6 +183,7 @@ cufftReal
 *gd_afCompFlt,
 *gd_afPadTplIn,
 *gd_afPadScnIn,
+*gd_afPadScnInPad,
 *gd_afCorr;
 
 //typedef float cufftComplex[2];
@@ -230,6 +191,7 @@ cufftComplex
 *gd_afScnPartOut,
 *gd_afPadTplOut,
 *gd_afPadScnOut,
+*gd_afPadScnOutPad,
 *gd_afWholeTplFFT,
 *gd_afPartTplFFT,
 *gd_afMul;
@@ -532,7 +494,7 @@ void getKernelDims(int iBlockDimX, int iSz, dim3* dThreads, dim3* dBlocks)
 }
 
 //check if we will get the same results as Matlab FFT with using CUDA FFT by using a very small image
-void cmpTest()
+/*void cmpTest()
 {
 	cufftReal *h_afTestReal, *h_afTestTpl, *d_afPadTestInReal;
 	cufftComplex *h_afTestCmplx, *d_afPadTestInCmplx, *d_afTestTplIn, *d_afTestTplOut, *d_afTestMul, *d_afTestCorr, *d_afPadTestOut_Real, *d_afPadTestOutCmplx;
@@ -591,104 +553,8 @@ void cmpTest()
 	CUFFT_SAFE_CALL(cufftExecC2R(hTestFFTplanInvReal, (cufftComplex *)d_afTestMul, (cufftReal *)d_afTestCorr));
 	cmpCPU(d_afTestCorr, "TestCorr.bin", 0, iSz, 0, (float)1e-6);
 
-	//ComplexScale << <32, 256 >> >(d_afPadTestOutCmplx, iSz, 1.0f / (float)iSz);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	cufftComplex* h_afPadTestOutCmplx;
-	h_afPadTestOutCmplx = (cufftComplex *)malloc(iMemSzCmplx);
-	CUDA_SAFE_CALL(cudaMemcpy(h_afPadTestOutCmplx, d_afPadTestOutCmplx, iMemSzCmplx, cudaMemcpyDeviceToHost));// copy memory to host
-	cl_mem cl_d_afPadTestOutCmplx = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, iMemSzCmplx, h_afPadTestOutCmplx, NULL);
-	//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-	//status = clEnqueueWriteBuffer(queue, cl_d_afPadScnOut, CL_TRUE, 0, giScnMemSzCmplx, h_afPadScnOut, 0, NULL, NULL);// write into CL buffer
-	//checkError(status, "Failed to write buffer cl_gd_afPadScnOut");
-
-	// Set the kernel arguments 
-	status = clSetKernelArg(ComplexScale_kernel, 0, sizeof(cl_mem), (void*)&cl_d_afPadTestOutCmplx);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(ComplexScale_kernel, 1, sizeof(cl_int), (void*)&iSz);
-	checkError(status, "Failed to set kernel arg 1");
-	float sc = 1.0f / (float)iSz;
-	status = clSetKernelArg(ComplexScale_kernel, 2, sizeof(float), (void*)&sc);
-	checkError(status, "Failed to set kernel arg 2");
-
-	printf("\nComplexScale Kernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	//size_t wgSize[3] = { 1, 1, 1 };
-	//size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, ComplexScale_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data 
-	status = clEnqueueReadBuffer(queue, cl_d_afPadTestOutCmplx, CL_TRUE, 0, giScnMemSzCmplx, h_afPadTestOutCmplx, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_afPadScnOut");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_d_afPadTestOutCmplx);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(d_afPadTestOutCmplx, h_afPadTestOutCmplx, giScnMemSzCmplx, cudaMemcpyHostToDevice));
-	free(h_afPadTestOutCmplx);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	//ComplexScale << <32, 256 >> >(d_afPadTestOut_Real, iSz, 1.0f / (float)iSz);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	cufftComplex* h_afPadTestOut_Real;
-	h_afPadTestOut_Real = (cufftComplex *)malloc(iMemSzCmplx);
-	CUDA_SAFE_CALL(cudaMemcpy(h_afPadTestOut_Real, d_afPadTestOut_Real, iMemSzCmplx, cudaMemcpyDeviceToHost));// copy memory to host
-	cl_mem cl_d_afPadTestOut_Real = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, iMemSzCmplx, h_afPadTestOut_Real, NULL);
-	//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-	//status = clEnqueueWriteBuffer(queue, cl_d_afPadScnOut, CL_TRUE, 0, giScnMemSzCmplx, h_afPadScnOut, 0, NULL, NULL);// write into CL buffer
-	//checkError(status, "Failed to write buffer cl_gd_afPadScnOut");
-
-	// Set the kernel arguments 
-	status = clSetKernelArg(ComplexScale_kernel, 0, sizeof(cl_mem), (void*)&cl_d_afPadTestOut_Real);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(ComplexScale_kernel, 1, sizeof(cl_int), (void*)&iSz);
-	checkError(status, "Failed to set kernel arg 1");
-	sc = 1.0f / (float)iSz;
-	status = clSetKernelArg(ComplexScale_kernel, 2, sizeof(float), (void*)&sc);
-	checkError(status, "Failed to set kernel arg 2");
-
-	printf("\nComplexScale Kernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	//size_t wgSize[3] = { 1, 1, 1 };
-	//size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, ComplexScale_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data 
-	status = clEnqueueReadBuffer(queue, cl_d_afPadTestOut_Real, CL_TRUE, 0, giScnMemSzCmplx, h_afPadTestOut_Real, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_d_afPadTestOut_Real");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_d_afPadTestOut_Real);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(d_afPadTestOutCmplx, h_afPadTestOutCmplx, giScnMemSzCmplx, cudaMemcpyHostToDevice));
-	free(h_afPadTestOutCmplx);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
+	ComplexScale << <32, 256 >> >(d_afPadTestOutCmplx, iSz, 1.0f / (float)iSz);
+	ComplexScale << <32, 256 >> >(d_afPadTestOut_Real, iSz, 1.0f / (float)iSz);
 	CUFFT_SAFE_CALL(cufftExecC2R(hTestFFTplanInvReal, (cufftComplex *)d_afPadTestOut_Real, (cufftReal *)d_afPadTestInReal));
 	CUFFT_SAFE_CALL(cufftExecC2C(hTestFFTplanCmplx, (cufftComplex *)d_afPadTestOutCmplx, (cufftComplex *)d_afPadTestInCmplx, CUFFT_INVERSE));
 
@@ -710,7 +576,7 @@ void cmpTest()
 	CUFFT_SAFE_CALL(cufftDestroy(hTestFFTplanCmplx));
 	CUFFT_SAFE_CALL(cufftDestroy(hTestFFTplanInvReal));
 	return;
-}
+}*/
 
 inline void InitKerTim(int iSz)
 {
@@ -741,7 +607,7 @@ inline void WrapKerTim(char* sKerName, int iSz)
 void MaxIdx(cufftReal* d_afData, int iSz, int** d_piMaxIdx)
 {
 	int iGDx;
-	if (iSz == giScnSz)
+	if (iSz == giScnSzPad)// fist pass
 		iGDx = giWholeMaxGDx; // = (640*480/512*8) = (307200/4096) = 75 - will need two passes 
 	else
 		iGDx = giPartMaxGDx;; // if TplSz = 60, (60*60/512*8)+1 = (3600/4096)+1 = 1 - will only need one pass 
@@ -757,80 +623,10 @@ void MaxIdx(cufftReal* d_afData, int iSz, int** d_piMaxIdx)
 
 	dim3 thread(BLOCKDIMX_MAX, 1, 1);
 	dim3 grid(iGDx, 1);
-	
+
 	//calculate block maxs
 	InitKerTim(iSz);
-	//max_k << < grid, thread >> >(d_afData, NULL, iSz, gd_afBlockMaxs, gd_aiBlockMaxIdxs);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	cufftReal* h_afData;
-	cufftReal* h_afBlockMaxs;
-	int* h_aiBlockMaxIdxs;
-	h_afData = (cufftReal*)malloc(giScnMemSzReal);
-	h_afBlockMaxs = (cufftReal*)malloc(sizeof(cufftReal)*giWholeMaxGDx);
-	h_aiBlockMaxIdxs = (int*)malloc(sizeof(int)*giWholeMaxGDx);
-	CUDA_SAFE_CALL(cudaMemcpy(h_afData, d_afData, giScnMemSzReal, cudaMemcpyDeviceToHost));// copy memory to host
-	CUDA_SAFE_CALL(cudaMemcpy(h_afBlockMaxs, gd_afBlockMaxs, sizeof(cufftReal)*giWholeMaxGDx, cudaMemcpyDeviceToHost));// copy memory to host
-	CUDA_SAFE_CALL(cudaMemcpy(h_aiBlockMaxIdxs, gd_aiBlockMaxIdxs, sizeof(int)*giWholeMaxGDx, cudaMemcpyDeviceToHost));// copy memory to host
-	cl_mem cl_d_afData = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, giScnMemSzReal, h_afData, NULL);
-	cl_mem cl_gd_afBlockMaxs = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sizeof(cufftReal)*giWholeMaxGDx, h_afBlockMaxs, NULL);
-	cl_mem cl_gd_aiBlockMaxIdxs = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sizeof(int)*giWholeMaxGDx, h_aiBlockMaxIdxs, NULL);
-
-	// Set the kernel arguments 
-	status = clSetKernelArg(max_k_kernel, 0, sizeof(cl_mem), (void*)&cl_d_afData);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(max_k_kernel, 1, sizeof(cl_mem), NULL);
-	checkError(status, "Failed to set kernel arg 1");
-	status = clSetKernelArg(max_k_kernel, 2, sizeof(int), (void*)&iSz);
-	checkError(status, "Failed to set kernel arg 2");
-	status = clSetKernelArg(max_k_kernel, 3, sizeof(cl_mem), (void*)&cl_gd_afBlockMaxs);
-	checkError(status, "Failed to set kernel arg 3");
-	status = clSetKernelArg(max_k_kernel, 4, sizeof(cl_mem), (void*)&cl_gd_aiBlockMaxIdxs);
-	checkError(status, "Failed to set kernel arg 4");
-	status = clSetKernelArg(max_k_kernel, 5, sizeof(int), (void*)&iGDx);// pass in what used to be GridDim
-	checkError(status, "Failed to set kernel arg 5");
-
-	printf("\nmax_k_kernel Kernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	//size_t wgSize[3] = { 1, 1, 1 };
-	//size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, max_k_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data 
-	status = clEnqueueReadBuffer(queue, cl_d_afData, CL_TRUE, 0, giScnMemSzReal, h_afData, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_d_afData");
-	status = clEnqueueReadBuffer(queue, cl_gd_afBlockMaxs, CL_TRUE, 0, sizeof(cufftReal)*giWholeMaxGDx, h_afBlockMaxs, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_afBlockMaxs");
-	status = clEnqueueReadBuffer(queue, cl_gd_aiBlockMaxIdxs, CL_TRUE, 0, sizeof(int)*giWholeMaxGDx, h_aiBlockMaxIdxs, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_aiBlockMaxIdxs");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_d_afData);
-	checkError(status, "Failed to release buffer");
-	status = clReleaseMemObject(cl_gd_afBlockMaxs);
-	checkError(status, "Failed to release buffer");
-	status = clReleaseMemObject(cl_gd_aiBlockMaxIdxs);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(d_afData, h_afData, giScnMemSzReal, cudaMemcpyHostToDevice));
-	free(h_afData);
-	CUDA_SAFE_CALL(cudaMemcpy(gd_afBlockMaxs, h_afBlockMaxs, sizeof(cufftReal)*giWholeMaxGDx, cudaMemcpyHostToDevice));
-	free(h_afBlockMaxs);
-	CUDA_SAFE_CALL(cudaMemcpy(gd_aiBlockMaxIdxs, h_aiBlockMaxIdxs, sizeof(int)*giWholeMaxGDx, cudaMemcpyHostToDevice));
-	free(h_aiBlockMaxIdxs);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
+	max_k << < grid, thread >> >(d_afData, NULL, iSz, gd_afBlockMaxs, gd_aiBlockMaxIdxs);
 	WrapKerTim("Max1stPass", iSz);
 	CUT_CHECK_ERROR("Kernel execution failed");
 
@@ -839,13 +635,13 @@ void MaxIdx(cufftReal* d_afData, int iSz, int** d_piMaxIdx)
 		*d_piMaxIdx = gd_aiBlockMaxIdxs;
 	}
 	else
-	{
+	{   //find golbal max form iGDx local max
 		//now do the second pass: each thread will read EACHTHREADREADS blockmaxs. 
 		//We have only one block and this block reads iGDx blockmaxs.
 		//note that (iGDx/EACHTHREADREADS) <= BLOCKDIMX_MAX
 		dim3 thread2(BLOCKDIMX_MAX, 1, 1);
 		dim3 grid2(1, 1);
-		
+
 		// execute the kernel
 		//calculate maxs of block maxs
 		InitKerTim(iSz);
@@ -869,13 +665,13 @@ float getPSR(cufftReal* gd_afCorr, cufftReal* gh_afArea, int* iPeakIndx, int iSz
 	int iMaxRow, iMaxCol;
 	Indx2Coord(iW, *iPeakIndx, &iMaxRow, &iMaxCol);
 	//The int4 type is a CUDA built-in type with four fields: x(RowBeg),y(RowEnd),z(ColBeg),w(ColEnd)
-	int4 aiAreaCoord = getSurrCoord(iMaxRow, iMaxCol, giAreaH, iW, iH);
+	int4 aiAreaCoord = getSurrCoord(iMaxRow, iMaxCol, giAreaH, iW, iH);// reutrn correct coord, cut boundary
 	int iStart = (aiAreaCoord.x*iW) + aiAreaCoord.z;
 	//area is not always giAreaH x giAreaH, it might be cut if the peak is close to boundary
 	int iNewAreaH = aiAreaCoord.y - aiAreaCoord.x + 1;
 	int iNewAreaW = aiAreaCoord.w - aiAreaCoord.z + 1;
 	int iNewAreaSz = iNewAreaW*iNewAreaH;
-	//transfer the area
+	//transfer the data(Corr-ed) from device 
 	InitKerTim(iSz);
 	CUDA_SAFE_CALL(cudaMemcpy2D(gh_afArea, iNewAreaW * sizeof(cufftReal), gd_afCorr + iStart, iW * sizeof(cufftReal), iNewAreaW * sizeof(cufftReal), iNewAreaH, cudaMemcpyDeviceToHost));
 	WrapKerTim("MemcpyD2HArea", iSz);
@@ -922,73 +718,12 @@ float getPSR(cufftReal* gd_afCorr, cufftReal* gh_afArea, int* iPeakIndx, int iSz
 	return fMeasure;
 }
 
-void Corr(cufftComplex* d_afTplOut, dim3 dBlocks, dim3 dThreads, cufftComplex* d_afScnOut, int iSz, cufftComplex* gd_afMul, cufftHandle hFFTplanInv, cufftReal* gd_afCorr, cufftReal* gh_afArea, int* piPeakIndx, float* pfPSR, int iW, int iH, bool szi)
-{   
+void Corr(cufftComplex* d_afTplOut, dim3 dBlocks, dim3 dThreads, cufftComplex* d_afScnOut, int iSz, cufftComplex* gd_afMul, cufftHandle hFFTplanInv, cufftReal* gd_afCorr, cufftReal* gh_afArea, int* piPeakIndx, float* pfPSR, int iW, int iH)
+{
+
 	//take conjugate of template fft and point wise multiply with scene and scale it with image size
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	int sz=szi ? giTplMemSzCmplx : giScnMemSzCmplx;
-	cl_int status;
-	cufftComplex* h_afMul, * h_afScnOut, * h_afTplOut;
-	h_afMul = (cufftComplex *)malloc(sz);
-	h_afScnOut = (cufftComplex *)malloc(sz);
-	h_afTplOut = (cufftComplex *)malloc(sz);
-	CUDA_SAFE_CALL(cudaMemcpy(h_afMul, gd_afMul, sz, cudaMemcpyDeviceToHost));// copy memory to host
-	CUDA_SAFE_CALL(cudaMemcpy(h_afScnOut, d_afScnOut, sz, cudaMemcpyDeviceToHost));
-	CUDA_SAFE_CALL(cudaMemcpy(h_afTplOut, d_afTplOut, sz, cudaMemcpyDeviceToHost));
-	cl_mem cl_gd_afMul = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sz, h_afMul, NULL);
-	cl_mem cl_d_afScnOut = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sz, h_afScnOut, NULL);
-	cl_mem cl_d_afTplOut = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sz, h_afTplOut, NULL);
-	//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-	//status = clEnqueueWriteBuffer();// write into CL buffer
-	//checkError(status, "Failed to write buffer cl_gd_afPadScnOut");
-
-	// Set the kernel arguments 
-	status = clSetKernelArg(pointWiseMul_kernel, 0, sizeof(cl_mem), (void*)&cl_gd_afMul);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(pointWiseMul_kernel, 1, sizeof(cl_mem), (void*)&cl_d_afScnOut);
-	checkError(status, "Failed to set kernel arg 1");
-	status = clSetKernelArg(pointWiseMul_kernel, 2, sizeof(cl_mem), (void*)&cl_d_afTplOut);
-	checkError(status, "Failed to set kernel arg 2");
-	status = clSetKernelArg(pointWiseMul_kernel, 3, sizeof(int), (void*)&iSz);
-	checkError(status, "Failed to set kernel arg 3");
-	float arg4 = (1.0f / (float)iSz);
-	status = clSetKernelArg(pointWiseMul_kernel, 4, sizeof(float), (void*)&arg4);
-	checkError(status, "Failed to set kernel arg 4");
-
-	//printf("\npointWiseMul Kernel initialization is complete.\n");
-	//printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	size_t wgSize[3] = { 1, 1, 1 };
-	size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, pointWiseMul_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data 
-	status = clEnqueueReadBuffer(queue, cl_gd_afMul, CL_TRUE, 0, sz, h_afMul, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_afMul");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_gd_afMul);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(gd_afMul, h_afMul, sz, cudaMemcpyHostToDevice));
-	free(h_afMul);
-	free(h_afScnOut);
-	free(h_afTplOut);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	InitKerTim(iSz);
-	//pointWiseMul << <dBlocks, dThreads >> >(gd_afMul, d_afScnOut, d_afTplOut, iSz, 1.0f / (float)iSz);
+	pointWiseMul << <dBlocks, dThreads >> >(gd_afMul, d_afScnOut, d_afTplOut, iSz, 1.0f / (float)iSz);//gd_afMul is the output of the kernel
 	WrapKerTim("Mul", iSz);
 	CUT_CHECK_ERROR("pointWiseMul() execution failed\n");
 	//take inverse FFT of multiplication
@@ -997,7 +732,7 @@ void Corr(cufftComplex* d_afTplOut, dim3 dBlocks, dim3 dThreads, cufftComplex* d
 	WrapKerTim("FFTinv", iSz);
 	CUDA_SAFE_CALL(cudaThreadSynchronize());
 	//find the PSR
-	*pfPSR = getPSR(gd_afCorr, gh_afArea, piPeakIndx, iSz, iW, iH);
+	*pfPSR = getPSR(gd_afCorr, gh_afArea, piPeakIndx, iSz, iW, iH);// return *piPeakIndex and fMeasure
 	return;
 }
 inline void InitTim()
@@ -1030,9 +765,9 @@ void PrepTplFFT(cufftReal* gd_afCompFlt, cufftReal** d_pafPadTplIn, cufftComplex
 	//first allocate mem
 	//WholeTpls are the MulCompFlts (last flts in the compflt list). They are used in 1st pass. Their size is as big as scn
 	//PartTpls are all other comp flt excluding MulCompFlts. They are used in 2nd pass. Their size is as big as tpl (is not blowed up to scn size)
-	int iWholeMemSz = giScnH * giScnW * giNumIPInFirst * giNumSz * gstCompFlt.iNumMulCompFlt * sizeof(cufftComplex);
+	int iWholeMemSz = giScnHPad * giScnWPad * giNumIPInFirst * giNumSz * gstCompFlt.iNumMulCompFlt * sizeof(cufftComplex);
 	CUDA_SAFE_CALL(cudaMalloc((void **)&*d_pafWholeTplFFT, iWholeMemSz));
-	CUDA_SAFE_CALL(cudaMalloc((void **)&d_afPadTplIn, giScnMemSzReal));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&d_afPadTplIn, giScnMemSzRealPad));
 	int iPartMemSz = giTplH * giTplW * giNumIPRot * giNumSz * giNumSngCompFlt * sizeof(cufftComplex);
 	CUDA_SAFE_CALL(cudaMalloc((void **)&*d_pafPartTplFFT, iPartMemSz));
 	//take FFT of WholeTpls
@@ -1042,14 +777,14 @@ void PrepTplFFT(cufftReal* gd_afCompFlt, cufftReal** d_pafPadTplIn, cufftComplex
 		{
 			for (iIPIndx = giBegIdxIPInFirst; iIPIndx < giEndIdxIPInFirst; iIPIndx++)
 			{
-				CUDA_SAFE_CALL(cudaMemset(d_afPadTplIn, 0, giScnMemSzReal));
+				CUDA_SAFE_CALL(cudaMemset(d_afPadTplIn, 0, giScnMemSzRealPad));
 				d_afTpl = gd_afCompFlt(iIPIndx, iSzIndx, iFltIndx);
 				//pad template
-				CUDA_SAFE_CALL(cudaMemcpy2D(d_afPadTplIn, (giScnW * sizeof(cufftReal)), d_afTpl, giTplWMemSz, giTplWMemSz, giTplH, cudaMemcpyDeviceToDevice));
+				CUDA_SAFE_CALL(cudaMemcpy2D(d_afPadTplIn, (giScnWPad * sizeof(cufftReal)), d_afTpl, giTplWMemSz, giTplWMemSz, giTplH, cudaMemcpyDeviceToDevice));
 				//take the fft and save it to WholeTplFFT
 				iFltAbsIndx = iFltIndx - giNumSngCompFlt;
 				iIPAbsIndx = iIPIndx - giBegIdxIPInFirst;
-				//printf("iIPIndx=%d iSzIndx=%d iFltIndx=%d d_afPadTplIn= %d\n", iIPIndx, iSzIndx, iFltIndx, d_afPadTplIn);
+				printf("iIPIndx=%d iSzIndx=%d iFltIndx=%d d_afPadTplIn= %d\n", iIPIndx, iSzIndx, iFltIndx, d_afPadTplIn);
 				CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)d_afPadTplIn, (cufftComplex *)*d_pafWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx)));
 
 			}
@@ -1064,7 +799,7 @@ void PrepTplFFT(cufftReal* gd_afCompFlt, cufftReal** d_pafPadTplIn, cufftComplex
 			for (iIPIndx = 0; iIPIndx < giNumIPRot; iIPIndx++)
 			{
 				d_afTpl = gd_afCompFlt(iIPIndx, iSzIndx, iFltIndx);
-				//printf("iIPIndx=%d iSzIndx=%d iFltIndx=%d d_afTpl= %d\n", iIPIndx, iSzIndx, iFltIndx, d_afTpl);
+				printf("iIPIndx=%d iSzIndx=%d iFltIndx=%d d_afTpl= %d\n", iIPIndx, iSzIndx, iFltIndx, d_afTpl);
 				//take the fft and save it to PartTplFFT
 				CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanPartFwd, (cufftReal *)d_afTpl, (cufftComplex *)*d_pafPartTplFFT(iIPIndx, iSzIndx, iFltIndx)));
 			}
@@ -1092,7 +827,7 @@ void DestroyTplFFT(cufftComplex* gd_afWholeTplFFT, cufftComplex* gd_afPartTplFFT
 void getWholeTplFFT(cufftReal* gd_afCompFlt, int iIPIndx, int iSzIndx, int iFltIndx, cufftReal* gd_afPadTplIn, cufftComplex** d_pafPadTplOut, cufftHandle ghFFTplanWholeFwd, cufftComplex* gd_afWholeTplFFT)
 {
 #ifdef SAVEFFT
-	int iFltAbsIndx = iFltIndx - giNumSngCompFlt;// from 0 to giNumOrigFlt-giNumSngCompFlt
+	int iFltAbsIndx = iFltIndx - giNumSngCompFlt;
 	int iIPAbsIndx = iIPIndx - giBegIdxIPInFirst;
 	*d_pafPadTplOut = gd_afWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx);
 #else
@@ -1124,14 +859,14 @@ void getCopyWidthHeight(int iMaxPeakIndx, int* piPartW, int* piPartH)
 {
 	int iMaxPeakRow, iMaxPeakCol;
 	//make sure we are not out of bounds
-	Indx2Coord(giScnW, iMaxPeakIndx, &iMaxPeakRow, &iMaxPeakCol);
+	Indx2Coord(giScnWPad, iMaxPeakIndx, &iMaxPeakRow, &iMaxPeakCol);// converted coord are the same with 640*480 and 1024*1024
 	*piPartW = giTplW;
 	int iEndCol = iMaxPeakCol + *piPartW - 1;
-	if (iEndCol >= giScnW)
+	if (iEndCol >= giScnW && iMaxPeakCol <= giScnW)
 		*piPartW = *piPartW - (iEndCol + 1 - giScnW);
 	*piPartH = giTplH;
 	int iEndRow = iMaxPeakRow + *piPartH - 1;
-	if (iEndRow >= giScnH)
+	if (iEndRow >= giScnH && iMaxPeakRow <= giScnW)
 		*piPartH = *piPartH - (iEndRow + 1 - giScnH);
 }
 
@@ -1203,127 +938,15 @@ void CpyScnToDevAndPreProcess(unsigned char* acScn, float* d_afPadScnIn, bool bC
 
 	InitTim();
 	InitKerTim(1);
-	//convertChar4ToFloatDoConGam << <gdBlocksConv, gdThreadsConv >> > (gd_ac4Scn, (float4*)d_afPadScnIn, (giScnSz / 4), bConGam);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	
-	uchar4* h_ac4Scn;
-	float4* h_afPadScnIn;
-	h_ac4Scn = (uchar4*)malloc(giScnMemSzUChar);
-	h_afPadScnIn = (float4*)malloc(giScnMemSzReal);
-	CUDA_SAFE_CALL(cudaMemcpy(h_ac4Scn, gd_ac4Scn, giScnMemSzUChar, cudaMemcpyDeviceToHost));// copy memory to host
-	CUDA_SAFE_CALL(cudaMemcpy(h_afPadScnIn, (float4*)d_afPadScnIn, giScnMemSzReal, cudaMemcpyDeviceToHost));// copy memory to host
-	cl_mem cl_gd_ac4Scn = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, giScnMemSzUChar, h_ac4Scn, NULL);
-	cl_mem cl_d_afPadScnIn = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, giScnMemSzReal, h_afPadScnIn, NULL);
-	//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-	//status = clEnqueueWriteBuffer(queue, cl_d_afPadScnOut, CL_TRUE, 0, giScnMemSzCmplx, h_afPadScnOut, 0, NULL, NULL);// write into CL buffer
-	//checkError(status, "Failed to write buffer cl_gd_afPadScnOut");
-
-	// Set the kernel arguments 
-	status = clSetKernelArg(convertChar4ToFloatDoConGam_kernel, 0, sizeof(cl_mem), (void*)&cl_gd_ac4Scn);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(convertChar4ToFloatDoConGam_kernel, 1, sizeof(cl_mem), (void*)&cl_d_afPadScnIn);
-	checkError(status, "Failed to set kernel arg 1");
-	int sc = (giScnSz / 4);
-	status = clSetKernelArg(convertChar4ToFloatDoConGam_kernel, 2, sizeof(int), (void*)&sc);
-	checkError(status, "Failed to set kernel arg 2");
-	int bc = bConGam; // bool to int
-	status = clSetKernelArg(convertChar4ToFloatDoConGam_kernel, 3, sizeof(int), (void*)&bc);
-	checkError(status, "Failed to set kernel arg 3");
-	printf("\nKernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	//size_t wgSize[3] = { 1, 1, 1 };
-	//size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, convertChar4ToFloatDoConGam_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data 
-	status = clEnqueueReadBuffer(queue, cl_gd_ac4Scn, CL_TRUE, 0, giScnMemSzUChar, h_ac4Scn, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_ac4Scn");
-	status = clEnqueueReadBuffer(queue, cl_d_afPadScnIn, CL_TRUE, 0, giScnMemSzReal, h_afPadScnIn, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_d_afPadScnIn");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_gd_ac4Scn);
-	checkError(status, "Failed to release buffer");
-	status = clReleaseMemObject(cl_d_afPadScnIn);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(gd_ac4Scn, h_ac4Scn, giScnMemSzUChar, cudaMemcpyHostToDevice));
-	free(h_ac4Scn);
-	CUDA_SAFE_CALL(cudaMemcpy((float4*)d_afPadScnIn, h_afPadScnIn, giScnMemSzReal, cudaMemcpyHostToDevice));
-	free(h_afPadScnIn);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
+	convertChar4ToFloatDoConGam << <gdBlocksConv, gdThreadsConv >> > (gd_ac4Scn, (float4*)d_afPadScnIn, (giScnSz / 4), bConGam);
 	WrapKerTim("ConvertScn", 1);
 	WrapTim("convertChar4ToFloatDoConGam");
 
 	if (bFixDead)
 	{
-		InitTim(); 
+		InitTim();
 		InitKerTim(1);
-		//fixDeadPixels << <gdBlocksDead, gdThreadsDead >> > ((cufftReal*)d_afPadScnIn, giScnSz, giScnW, giScnH);
-		////////////////////////////////////////////////////////////////////////////////////////////////////////
-		cufftReal* h_afPadScnIn;
-		h_afPadScnIn = (cufftReal *)malloc(giScnMemSzReal);
-		CUDA_SAFE_CALL(cudaMemcpy(h_afPadScnIn, (cufftReal*)d_afPadScnIn, giScnMemSzReal, cudaMemcpyDeviceToHost));// copy memory to host
-		cl_mem cl_d_afPadScnIn = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, giScnMemSzReal, h_afPadScnIn, NULL);
-		//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-		//status = clEnqueueWriteBuffer(queue, cl_d_afPadScnOut, CL_TRUE, 0, giScnMemSzCmplx, h_afPadScnOut, 0, NULL, NULL);// write into CL buffer
-		//checkError(status, "Failed to write buffer cl_gd_afPadScnOut");
-
-		// Set the kernel arguments 
-		status = clSetKernelArg(fixDeadPixels_kernel, 0, sizeof(cl_mem), (void*)&cl_d_afPadScnIn);
-		checkError(status, "Failed to set kernel arg 0");
-		status = clSetKernelArg(fixDeadPixels_kernel, 1, sizeof(cl_int), (void*)&giScnSz);
-		checkError(status, "Failed to set kernel arg 1");
-		int ScnW = giScnW;
-		status = clSetKernelArg(fixDeadPixels_kernel, 2, sizeof(cl_int), (void*)&ScnW);
-		checkError(status, "Failed to set kernel arg 2");
-		int ScnH = giScnH;
-		status = clSetKernelArg(fixDeadPixels_kernel, 3, sizeof(cl_int), (void*)&ScnH);
-		checkError(status, "Failed to set kernel arg 3");
-
-		printf("\nkthLaw Kernel initialization is complete.\n");
-		printf("Launching the kernel...\n\n");
-
-		// Configure work set over which the kernel will execute
-		//size_t wgSize[3] = { 1, 1, 1 };
-		//size_t gSize[3] = { 1, 1, 1 };
-
-		// Launch the kernel
-		status = clEnqueueNDRangeKernel(queue, fixDeadPixels_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-		checkError(status, "Failed to launch kernel");
-		//clReleaseEvent(*write_event);
-
-		//Read back data 
-		status = clEnqueueReadBuffer(queue, cl_d_afPadScnIn, CL_TRUE, 0, giScnMemSzReal, h_afPadScnIn, 0, NULL, NULL);
-		checkError(status, "Failed to read buffer cl_gd_afPadScnOut");
-
-		//Free CL buffer
-		status = clReleaseMemObject(cl_d_afPadScnIn);
-		checkError(status, "Failed to release buffer");
-		// Wait for command queue to complete pending events
-		status = clFinish(queue);
-		checkError(status, "Failed to finish");
-
-		printf("\nKernel execution is complete.\n");
-
-		// Free the resources allocated
-		//AOCLcleanup();
-		CUDA_SAFE_CALL(cudaMemcpy((cufftReal*)d_afPadScnIn, h_afPadScnIn, giScnMemSzReal, cudaMemcpyHostToDevice));
-		free(h_afPadScnIn);
-		////////////////////////////////////////////////////////////////////////////////////////////////////////
+		fixDeadPixels << <gdBlocksDead, gdThreadsDead >> > ((cufftReal*)d_afPadScnIn, giScnSz, giScnW, giScnH);
 		WrapKerTim("FixScn", 1);
 		WrapTim("fixDeadPixel");
 	}
@@ -1334,7 +957,7 @@ void CpyScnToDevAndPreProcess(unsigned char* acScn, float* d_afPadScnIn, bool bC
 	CUDA_SAFE_CALL(cudaMemcpy(h_afScnOut, d_afPadScnIn, giScnMemSzReal, cudaMemcpyDeviceToHost));
 	for (int i = 0; i < giScnSz; i++)
 		acScn[i + giScnOffset] = (unsigned char)h_afScnOut[i];
-	free(h_afScnOut);//????*/
+	free(h_afScnOut);*/
 #endif
 
 #ifdef SAVEFIXEDSCN
@@ -1364,7 +987,6 @@ void CpyScnToDevAndPreProcess(unsigned char* acScn, float* d_afPadScnIn, bool bC
 	CUDA_SAFE_CALL(cudaMemcpy(gd_ac4Scn, acScnClahe, giScnMemSzUChar, cudaMemcpyHostToDevice));
 	convertChar4ToFloatDoConGam << <gdBlocksConv, gdThreadsConv >> >(gd_ac4Scn, (float4*)d_afPadScnIn, (giScnSz / 4), bConGam);
 	free(h_afScnClahe);
-	//free(h_afScnOut);
 	free(acScnClahe);
 #ifdef PARTIM
 	CUDA_SAFE_CALL(cudaThreadSynchronize());
@@ -1528,38 +1150,6 @@ void IncFPSCount(unsigned long ulTimeStamp, int iFrameCur)
 ////////////////////////////////////////////////////////////////////////////////
 void ssd_fft_gpu_init()
 {
-	///////////////////////////////////////////////////////////////
-	
-	cl_int status;
-
-	if (!init()) {
-	return;
-	}
-	/*
-	// Set the kernel argument (argument 0)
-	status = clSetKernelArg(kernel, 0, sizeof(cl_int), (void*)&thread_id_to_output);
-	checkError(status, "Failed to set kernel arg 0");
-
-	printf("\nKernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	size_t wgSize[3] = { work_group_size, 1, 1 };
-	size_t gSize[3] = { work_group_size, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	AOCLcleanup();*/
-	////////////////////////////////////////////////////////////////
 
 #ifdef CMPTEST
 	cmpTest();
@@ -1585,11 +1175,11 @@ void ssd_fft_gpu_init()
 	printf("Read composite filters...\n");
 #endif
 	//read comp filters
-	gstCompFlt = readCompFlt();//can't read
+	gstCompFlt = readCompFlt();
 	giTplH = gstCompFlt.iH;//
 	giTplW = gstCompFlt.iW;//
-	//printf("giTplW=%d\n", giTplW);
-	//printf("giTplH=%d\n", giTplH);
+	printf("giTplW=%d\n", giTplW);
+	printf("giTplH=%d\n", giTplH);
 	giTplSz = giTplH * giTplW;
 	giTplWMemSz = giTplW * sizeof(cufftReal);
 	giTplMemSzReal = giTplH * giTplW * sizeof(cufftReal);
@@ -1599,14 +1189,13 @@ void ssd_fft_gpu_init()
 	giNumOrigFlt = gstCompFlt.iNumOrigFlt;
 	giNumSngCompFlt = giNumOrigFlt - gstCompFlt.iNumMulCompFlt;
 
-	
 	//do some check
 	giPartMaxGDx = (giTplSz) % (BLOCKDIMX_MAX*EACHTHREADREADS) > 0 ? ((giTplSz) / (BLOCKDIMX_MAX*EACHTHREADREADS)) + 1 : (giTplSz) / (BLOCKDIMX_MAX*EACHTHREADREADS);
 	if (giPartMaxGDx > 1)
 	{
 		printf("Warning: Max of part scn can not be found in one pass!\n");
 	}
-	giWholeMaxGDx = (giScnSz) % (BLOCKDIMX_MAX*EACHTHREADREADS) > 0 ? ((giScnSz) / (BLOCKDIMX_MAX*EACHTHREADREADS)) + 1 : (giScnSz) / (BLOCKDIMX_MAX*EACHTHREADREADS);
+	giWholeMaxGDx = (giScnSzPad) % (BLOCKDIMX_MAX*EACHTHREADREADS) > 0 ? ((giScnSzPad) / (BLOCKDIMX_MAX*EACHTHREADREADS)) + 1 : (giScnSzPad) / (BLOCKDIMX_MAX*EACHTHREADREADS);
 	if ((giWholeMaxGDx / EACHTHREADREADS) > BLOCKDIMX_MAX)
 	{
 		//in the second pass each thread will read EACHTHREADREADS blockmaxs. There is giWholeMaxGDx blocks at most.
@@ -1628,9 +1217,11 @@ void ssd_fft_gpu_init()
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_ac4Scn, giScnMemSzUChar));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afCompFlt, gstCompFlt.iDataMemSz));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnIn, giScnMemSzReal));
-	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afCorr, giScnMemSzReal));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnInPad, giScnMemSzRealPad));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afCorr, giScnMemSzRealPad));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnOut, giScnMemSzCmplx));
-	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afMul, giScnMemSzCmplx));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnOutPad, giScnMemSzCmplxPad));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afMul, giScnMemSzCmplxPad));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afScnPartIn, giTplMemSzReal));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afScnPartOut, giTplMemSzCmplx));
 	CUDA_SAFE_CALL(cudaMalloc((void**)&gd_pfMax, sizeof(cufftReal)));
@@ -1652,15 +1243,16 @@ void ssd_fft_gpu_init()
 	getKernelDims(BLOCKDIMX, giScnSz / 4, &gdThreadsConv, &gdBlocksConv);
 	getKernelDims(BLOCKDIMX, giScnSz / 2, &gdThreadsDead, &gdBlocksDead);
 	gdThreadsDead.x = gdThreadsDead.x + (HALFWARP + 1);
-	getKernelDims(BLOCKDIMX, giScnSz, &gdThreadsWhole, &gdBlocksWhole);
+	getKernelDims(BLOCKDIMX, giScnSzPad, &gdThreadsWhole, &gdBlocksWhole);// for first pass
 	getKernelDims(BLOCKDIMX, giTplSz, &gdThreadsPart, &gdBlocksPart);
 
 	//Creating FFT plan for whole scene
-	CUFFT_SAFE_CALL(cufftPlan2d(&ghFFTplanWholeFwd, giScnH, giScnW, CUFFT_R2C));
-	CUFFT_SAFE_CALL(cufftPlan2d(&ghFFTplanWholeInv, giScnH, giScnW, CUFFT_C2R));
+	CUFFT_SAFE_CALL(cufftPlan2d(&ghFFTplanWholeFwd, giScnHPad, giScnWPad, CUFFT_R2C));
+	CUFFT_SAFE_CALL(cufftPlan2d(&ghFFTplanWholeInv, giScnHPad, giScnWPad, CUFFT_C2R));
 	//Creating FFT plan for part of the scene
 	CUFFT_SAFE_CALL(cufftPlan2d(&ghFFTplanPartFwd, giTplH, giTplW, CUFFT_R2C));
 	CUFFT_SAFE_CALL(cufftPlan2d(&ghFFTplanPartInv, giTplH, giTplW, CUFFT_C2R));
+	printf("%d %d", giTplH, giTplW);
 
 	//CUT_SAFE_CALL( sdkCreateTimer(&guiParTim) );
 	sdkCreateTimer(&guiParTim);
@@ -1831,61 +1423,19 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 #endif
 
 	CpyScnToDevAndPreProcess(acScn, gd_afPadScnIn, gbConGam, bFixDead);
-
+	// pad gd_afPadScnIn to 1024*1024 gd_afPadScnInPad
+	CUDA_SAFE_CALL(cudaMemset(gd_afPadScnInPad, 0, giScnMemSzRealPad));
+	//pad template
+	CUDA_SAFE_CALL(cudaMemcpy2D(gd_afPadScnInPad, (giScnWPad * sizeof(cufftReal)), gd_afPadScnIn, giScnW * sizeof(cufftReal), giScnW * sizeof(cufftReal), giScnH, cudaMemcpyDeviceToDevice));
 	//Running the correlation...
 	InitTim();
 	//take the FFT of the scene
 	InitKerTim(2);
-	CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)gd_afPadScnIn, (cufftComplex *)gd_afPadScnOut));
+	CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)gd_afPadScnInPad, (cufftComplex *)gd_afPadScnOutPad));
 	WrapKerTim("wholeFFT", 2);
 	//apply kth law to scene
 	InitKerTim(2);
-	//kthLaw << <gdBlocksWhole, gdThreadsWhole >> >(gd_afPadScnOut, giScnSz);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	cufftComplex* h_afPadScnOut;
-	h_afPadScnOut = (cufftComplex *)malloc(giScnMemSzCmplx);
-	CUDA_SAFE_CALL(cudaMemcpy(h_afPadScnOut, gd_afPadScnOut, giScnMemSzCmplx, cudaMemcpyDeviceToHost));// copy memory to host
-	cl_mem cl_d_afPadScnOut = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, giScnMemSzCmplx, h_afPadScnOut, NULL);
-	//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-	//status = clEnqueueWriteBuffer(queue, cl_d_afPadScnOut, CL_TRUE, 0, giScnMemSzCmplx, h_afPadScnOut, 0, NULL, NULL);// write into CL buffer
-	//checkError(status, "Failed to write buffer cl_gd_afPadScnOut");
-
-	// Set the kernel arguments 
-	status = clSetKernelArg(kthLaw_kernel, 0, sizeof(cl_mem), (void*)&cl_d_afPadScnOut);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(kthLaw_kernel, 1, sizeof(cl_int), (void*)&giScnSz);
-	checkError(status, "Failed to set kernel arg 1");
-
-	printf("\nkthLaw Kernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	//size_t wgSize[3] = { 1, 1, 1 };
-	//size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, kthLaw_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data 
-	status = clEnqueueReadBuffer(queue, cl_d_afPadScnOut, CL_TRUE, 0, giScnMemSzCmplx, h_afPadScnOut, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_afPadScnOut");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_d_afPadScnOut);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(gd_afPadScnOut, h_afPadScnOut, giScnMemSzCmplx, cudaMemcpyHostToDevice));
-	free(h_afPadScnOut);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
+	kthLaw << <gdBlocksWhole, gdThreadsWhole >> >(gd_afPadScnOutPad, giScnSzPad);
 	WrapKerTim("wholeKth", 2);
 	//initialize max PSR value
 	fMaxPSR = INT_MIN;
@@ -1901,14 +1451,14 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 				//I am not initializing gh_afArea. make sure you reach right coords.
 				getWholeTplFFT(gd_afCompFlt, iIPIndx, iSzIndx, iFltIndx, gd_afPadTplIn, &gd_afPadTplOut, ghFFTplanWholeFwd, gd_afWholeTplFFT);
 				//perform correlation
-				Corr(gd_afPadTplOut, gdBlocksWhole, gdThreadsWhole, gd_afPadScnOut, giScnSz, gd_afMul, ghFFTplanWholeInv, gd_afCorr, gh_afArea, &iPeakIndx, &fPSR, giScnW, giScnH, false);
+				Corr(gd_afPadTplOut, gdBlocksWhole, gdThreadsWhole, gd_afPadScnOutPad, giScnSzPad, gd_afMul, ghFFTplanWholeInv, gd_afCorr, gh_afArea, &iPeakIndx, &fPSR, giScnWPad, giScnHPad);
 				//printf("PSR value for MulCompFlt: %f (iFltIndx = %d IPAng = %d, Sz = %d)\n", fPSR, iFltIndx, gstCompFlt.aiIPAngs[iIPIndx], gstCompFlt.aiTplCols[iSzIndx]);
 				if (fPSR > fMaxPSR)
 				{
 					fMaxPSR = fPSR;
-					iMaxIPIndx = iIPIndx;
+					iMaxIPIndx = iIPIndx;// which filter
 					iMaxSzIndx = iSzIndx;
-					*piMaxPeakIndx = iPeakIndx;
+					*piMaxPeakIndx = iPeakIndx;// location of peak
 				}
 			}
 		}
@@ -1937,11 +1487,13 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 	//copy template-size portion of the scene starting at peak point
 	//	CUDA_SAFE_CALL( cudaMemcpy2D( gd_afScnPartIn, giTplWMemSz, gd_afPadScnIn+iMaxPeakIndx, giScnW*sizeof(cufftReal), giTplWMemSz, giTplH , cudaMemcpyDeviceToDevice ));
 	getCopyWidthHeight(*piMaxPeakIndx, piPartW, piPartH);
+	int ConvertPeakIndx = *piMaxPeakIndx % 1024 + (*piMaxPeakIndx / 1024) * 640;//***
 	iPartWMemSz = *piPartW * sizeof(cufftReal);
 	//make sure you initialize gd_afScnPartIn with zeros before processing each frame (if we are out of bounds, we will have a part image padded with zeros)
 	InitKerTim(3);
 	CUDA_SAFE_CALL(cudaMemset(gd_afScnPartIn, 0, giTplMemSzReal));
-	CUDA_SAFE_CALL(cudaMemcpy2D(gd_afScnPartIn, giTplWMemSz, gd_afPadScnIn + *piMaxPeakIndx, giScnW * sizeof(cufftReal), iPartWMemSz, *piPartH, cudaMemcpyDeviceToDevice));
+	//copy the part where PSR is highest in the first pass
+	CUDA_SAFE_CALL(cudaMemcpy2D(gd_afScnPartIn, giTplWMemSz, gd_afPadScnIn + ConvertPeakIndx, giScnW * sizeof(cufftReal), iPartWMemSz, *piPartH, cudaMemcpyDeviceToDevice));
 	WrapKerTim("MemcpyD2DPart", 3);
 	//take the FFT of the scene
 	InitKerTim(3);
@@ -1949,52 +1501,7 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 	WrapKerTim("partFFT", 3);
 	//apply kth law to scene
 	InitKerTim(3);
-	//kthLaw << <gdBlocksPart, gdThreadsPart >> >(gd_afScnPartOut, giTplSz);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	cufftComplex* h_afScnPartOut;
-	h_afScnPartOut = (cufftComplex *)malloc(giTplMemSzCmplx);
-	CUDA_SAFE_CALL(cudaMemcpy(h_afScnPartOut, gd_afScnPartOut, giTplMemSzCmplx, cudaMemcpyDeviceToHost));// copy memory to host
-	cl_mem cl_d_afScnPartOut = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, giTplMemSzCmplx, h_afScnPartOut, NULL);
-	//cl_event* write_event = (cl_event *)malloc(sizeof(cl_event));
-	//status = clEnqueueWriteBuffer(queue, cl_d_afScnPartOut, CL_TRUE, 0, giTplMemSzCmplx, h_afScnPartOut, 0, NULL, NULL);// write into CL buffer
-	//checkError(status, "Failed to write buffer cl_gd_afScnPartOut");
-
-	// Set the kernel arguments
-	status = clSetKernelArg(kthLaw_kernel, 0, sizeof(cl_mem), (void*)&cl_d_afScnPartOut);
-	checkError(status, "Failed to set kernel arg 0");
-	status = clSetKernelArg(kthLaw_kernel, 1, sizeof(cl_int), (void*)&giTplSz);
-	checkError(status, "Failed to set kernel arg 1");
-
-	printf("\nkthLaw Kernel initialization is complete.\n");
-	printf("Launching the kernel...\n\n");
-
-	// Configure work set over which the kernel will execute
-	//size_t wgSize[3] = { 1, 1, 1 };
-	//size_t gSize[3] = { 1, 1, 1 };
-
-	// Launch the kernel
-	status = clEnqueueNDRangeKernel(queue, kthLaw_kernel, 1, NULL, gSize, wgSize, 0, NULL, NULL);
-	checkError(status, "Failed to launch kernel");
-	//clReleaseEvent(*write_event);
-
-	//Read back data
-	status = clEnqueueReadBuffer(queue, cl_d_afScnPartOut, CL_TRUE, 0, giTplMemSzCmplx, h_afScnPartOut, 0, NULL, NULL);
-	checkError(status, "Failed to read buffer cl_gd_afScnPartOut");
-
-	//Free CL buffer
-	status = clReleaseMemObject(cl_d_afScnPartOut);
-	checkError(status, "Failed to release buffer");
-	// Wait for command queue to complete pending events
-	status = clFinish(queue);
-	checkError(status, "Failed to finish");
-
-	printf("\nKernel execution is complete.\n");
-
-	// Free the resources allocated
-	//AOCLcleanup();
-	CUDA_SAFE_CALL(cudaMemcpy(gd_afScnPartOut, h_afScnPartOut, giTplMemSzCmplx, cudaMemcpyHostToDevice));
-	free(h_afScnPartOut);
-	////////////////////////////////////////////////////////////////////////////////////////////////////////
+	kthLaw << <gdBlocksPart, gdThreadsPart >> >(gd_afScnPartOut, giTplSz);
 	WrapKerTim("partKth", 3);
 	fMaxPSR = INT_MIN;
 	WrapTim("SecondPassInit");
@@ -2004,7 +1511,8 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 		for (iIPIndx = giBegIdxIPInSecond; iIPIndx < giEndIdxIPInSecond; iIPIndx++)
 		{
 			getPartTplFFT(gd_afCompFlt, iIPIndx, iMaxSzIndx, iFltIndx, &gd_afPadTplOut, ghFFTplanPartFwd, gd_afPartTplFFT);
-			Corr(gd_afPadTplOut, gdBlocksPart, gdThreadsPart, gd_afScnPartOut, giTplSz, gd_afMul, ghFFTplanPartInv, gd_afCorr, gh_afArea, &iPeakIndx, &fPSR, giTplW, giTplH, true);
+			// iPeakIndx is useless here
+			Corr(gd_afPadTplOut, gdBlocksPart, gdThreadsPart, gd_afScnPartOut, giTplSz, gd_afMul, ghFFTplanPartInv, gd_afCorr, gh_afArea, &iPeakIndx, &fPSR, giTplW, giTplH);
 			if (fPSR > fMaxPSR)
 			{
 				fMaxPSR = fPSR;
@@ -2063,6 +1571,19 @@ void ssd_fft_gpu_findBestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPa
 void ssd_fft_gpu_returnBestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPartH, int* file_info, unsigned long ulTimeStamp, int* iSLCurFrm, int* iSLResult, char* acClipName)
 {
 	strcpy(gacClipName, acClipName);
+	/*bool bFixDead = gbFixDead;
+	CpyScnToDevAndPreProcess(acScn, gd_afPadScnIn, gbConGam, bFixDead);
+	CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)gd_afPadScnIn, (cufftComplex *)gd_afPadScnOut));
+	CUFFT_SAFE_CALL(cufftExecC2R(ghFFTplanWholeInv, (cufftComplex *)gd_afPadScnOut, (cufftReal *)gd_afPadScnIn));
+	float* h_acScn;
+	h_acScn = (float*)malloc(giScnMemSzReal);
+	CUFFT_SAFE_CALL(cudaMemcpy(h_acScn, (cufftReal*)gd_afPadScnIn, giScnMemSzReal, cudaMemcpyDeviceToHost));
+	for (int i = 0; i < 307200; i++)
+	{
+		acScn[i] = 255 * h_acScn[i];
+	}
+	//convertChar4ToFloatDoConGam << <gdBlocksConv, gdThreadsConv >> > (gd_ac4Scn, (float4*)d_afPadScnIn, (giScnSz / 4), bConGam);
+	*/
 	BestTpl(acScn, piMaxPeakIndx, piPartW, piPartH, file_info, ulTimeStamp);
 	*iSLCurFrm = giSLCurFrm;
 	*iSLResult = giSLResult;
@@ -2076,7 +1597,7 @@ void ssd_fft_gpu_exit() {
 	g_iNumVideos++;
 	g_fAllVideoTime = g_fAllVideoTime + (float)(((double)g_ulLastTimeStamp - (double)g_ulFirstTimeStamp) / 1000 / 60);
 	//write all video time to the file
-	strcpy(g_sStatsPath, g_sStatsPathBegin); 
+	strcpy(g_sStatsPath, g_sStatsPathBegin);
 	strcat(g_sStatsPath, "AllVideoTime.txt\0");
 	g_fStatsFile = fopen(g_sStatsPath, "wb");
 	if (g_fStatsFile == NULL)
@@ -2093,10 +1614,12 @@ void ssd_fft_gpu_exit() {
 	CUFFT_SAFE_CALL(cufftDestroy(ghFFTplanPartInv));
 	CUDA_SAFE_CALL(cudaFree(gd_ac4Scn));
 	CUDA_SAFE_CALL(cudaFree(gd_afPadScnIn));
+	CUDA_SAFE_CALL(cudaFree(gd_afPadScnInPad));
 	CUDA_SAFE_CALL(cudaFree(gd_afScnPartIn));
 	CUDA_SAFE_CALL(cudaFree(gd_afScnPartOut));
 	CUDA_SAFE_CALL(cudaFree(gd_afCompFlt));
 	CUDA_SAFE_CALL(cudaFree(gd_afPadScnOut));
+	CUDA_SAFE_CALL(cudaFree(gd_afPadScnOutPad));
 	CUDA_SAFE_CALL(cudaFree(gd_afCorr));
 	CUDA_SAFE_CALL(cudaFree(gd_afMul));
 	CUDA_SAFE_CALL(cudaFree(gd_pfMax));
@@ -2124,179 +1647,3 @@ void ssd_fft_gpu_exit() {
 	//CUT_EXIT(argc, argv);
 }
 
-bool init() {
-	cl_int status;
-
-	if (!setCwdToExeDir()) {
-		return false;
-	}
-
-	// Get the OpenCL platform.
-	platform = findPlatform("Intel");
-	if (platform == NULL) {
-		printf("ERROR: Unable to find Intel FPGA OpenCL platform.\n");
-		return false;
-	}
-
-	// User-visible output - Platform information
-	{
-		char char_buffer[STRING_BUFFER_LEN];
-		printf("Querying platform for info:\n");
-		printf("==========================\n");
-		clGetPlatformInfo(platform, CL_PLATFORM_NAME, STRING_BUFFER_LEN, char_buffer, NULL);
-		printf("%-40s = %s\n", "CL_PLATFORM_NAME", char_buffer);
-		clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, STRING_BUFFER_LEN, char_buffer, NULL);
-		printf("%-40s = %s\n", "CL_PLATFORM_VENDOR ", char_buffer);
-		clGetPlatformInfo(platform, CL_PLATFORM_VERSION, STRING_BUFFER_LEN, char_buffer, NULL);
-		printf("%-40s = %s\n\n", "CL_PLATFORM_VERSION ", char_buffer);
-	}
-
-	// Query the available OpenCL devices.
-	scoped_array<cl_device_id> devices;
-	cl_uint num_devices;
-
-	devices.reset(getDevices(platform, CL_DEVICE_TYPE_ALL, &num_devices));
-
-	// We'll just use the first device.
-	device = devices[0];
-
-	// Display some device information.
-	display_device_info(device);
-
-	// Create the context.
-	context = clCreateContext(NULL, 1, &device, &oclContextCallback, NULL, &status);
-	checkError(status, "Failed to create context");
-
-	// Create the command queue.
-	queue = clCreateCommandQueue(context, device, CL_QUEUE_PROFILING_ENABLE, &status);
-	checkError(status, "Failed to create command queue");
-
-	// Create the program.
-	std::string binary_file = getBoardBinaryFile("ssd_fft_gpu", device);
-	printf("Using AOCX: %s\n", binary_file.c_str());
-	program = createProgramFromBinary(context, binary_file.c_str(), &device, 1);
-
-	// Build the program that was just created.
-	status = clBuildProgram(program, 0, NULL, "", NULL, NULL);
-	checkError(status, "Failed to build program");
-
-	// Create the kernel - name passed in here must match kernel name in the
-	// original CL file, that was compiled into an AOCX file using the AOC tool
-	const char *kernel_name = "kthLaw";  // Kernel name, as defined in the CL file
-	kthLaw_kernel = clCreateKernel(program, kernel_name, &status);
-	checkError(status, "Failed to create kernel kthLaw");
-
-	kernel_name = "pointWiseMul";  // Kernel name, as defined in the CL file
-	pointWiseMul_kernel = clCreateKernel(program, kernel_name, &status);
-	checkError(status, "Failed to create kernel pointWiseMul");
-
-	kernel_name = "ComplexScale";  // Kernel name, as defined in the CL file
-	ComplexScale_kernel = clCreateKernel(program, kernel_name, &status);
-	checkError(status, "Failed to create kernel ComplexScale"); 
-	
-	kernel_name = "convertChar4ToFloatDoConGam";  // Kernel name, as defined in the CL file
-	convertChar4ToFloatDoConGam_kernel = clCreateKernel(program, kernel_name, &status);
-	checkError(status, "Failed to create kernel convertChar4ToFloatDoConGam");
-
-	kernel_name = "fixDeadPixels";  // Kernel name, as defined in the CL file
-	fixDeadPixels_kernel = clCreateKernel(program, kernel_name, &status);
-	checkError(status, "Failed to create kernel kthLaw");
-
-	kernel_name = "max_k";  // Kernel name, as defined in the CL file
-	max_k_kernel = clCreateKernel(program, kernel_name, &status);
-	checkError(status, "Failed to create kernel ComplexScale"); 
-	return true;
-}
-
-// Free the resources allocated during initialization
-void AOCLcleanup() { //cleanup CL
-	if (kthLaw_kernel) {
-		clReleaseKernel(kthLaw_kernel);
-	}
-	if (pointWiseMul_kernel) {
-		clReleaseKernel(pointWiseMul_kernel);
-	}
-	if (ComplexScale_kernel) {
-		clReleaseKernel(ComplexScale_kernel);
-	}
-	if (convertChar4ToFloatDoConGam_kernel) {
-		clReleaseKernel(convertChar4ToFloatDoConGam_kernel);
-	}
-	if (fixDeadPixels_kernel) {
-		clReleaseKernel(fixDeadPixels_kernel);
-	}
-	if (max_k_kernel) {
-		clReleaseKernel(fixDeadPixels_kernel);
-	}
-	if (program) {
-		clReleaseProgram(program);
-	}
-	if (queue) {
-		clReleaseCommandQueue(queue);
-	}
-	if (context) {
-		clReleaseContext(context);
-	}
-}
-
-// Helper functions to display parameters returned by OpenCL queries
-static void device_info_ulong(cl_device_id device, cl_device_info param, const char* name) {
-	cl_ulong a;
-	clGetDeviceInfo(device, param, sizeof(cl_ulong), &a, NULL);
-	printf("%-40s = %lu\n", name, a);
-}
-static void device_info_uint(cl_device_id device, cl_device_info param, const char* name) {
-	cl_uint a;
-	clGetDeviceInfo(device, param, sizeof(cl_uint), &a, NULL);
-	printf("%-40s = %u\n", name, a);
-}
-static void device_info_bool(cl_device_id device, cl_device_info param, const char* name) {
-	cl_bool a;
-	clGetDeviceInfo(device, param, sizeof(cl_bool), &a, NULL);
-	printf("%-40s = %s\n", name, (a ? "true" : "false"));
-}
-static void device_info_string(cl_device_id device, cl_device_info param, const char* name) {
-	char a[STRING_BUFFER_LEN];
-	clGetDeviceInfo(device, param, STRING_BUFFER_LEN, &a, NULL);
-	printf("%-40s = %s\n", name, a);
-}
-
-// Query and display OpenCL information on device and runtime environment
-static void display_device_info(cl_device_id device) {
-
-	printf("Querying device for info:\n");
-	printf("========================\n");
-	device_info_string(device, CL_DEVICE_NAME, "CL_DEVICE_NAME");
-	device_info_string(device, CL_DEVICE_VENDOR, "CL_DEVICE_VENDOR");
-	device_info_uint(device, CL_DEVICE_VENDOR_ID, "CL_DEVICE_VENDOR_ID");
-	device_info_string(device, CL_DEVICE_VERSION, "CL_DEVICE_VERSION");
-	device_info_string(device, CL_DRIVER_VERSION, "CL_DRIVER_VERSION");
-	device_info_uint(device, CL_DEVICE_ADDRESS_BITS, "CL_DEVICE_ADDRESS_BITS");
-	device_info_bool(device, CL_DEVICE_AVAILABLE, "CL_DEVICE_AVAILABLE");
-	device_info_bool(device, CL_DEVICE_ENDIAN_LITTLE, "CL_DEVICE_ENDIAN_LITTLE");
-	device_info_ulong(device, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, "CL_DEVICE_GLOBAL_MEM_CACHE_SIZE");
-	device_info_ulong(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, "CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE");
-	device_info_ulong(device, CL_DEVICE_GLOBAL_MEM_SIZE, "CL_DEVICE_GLOBAL_MEM_SIZE");
-	device_info_bool(device, CL_DEVICE_IMAGE_SUPPORT, "CL_DEVICE_IMAGE_SUPPORT");
-	device_info_ulong(device, CL_DEVICE_LOCAL_MEM_SIZE, "CL_DEVICE_LOCAL_MEM_SIZE");
-	device_info_ulong(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, "CL_DEVICE_MAX_CLOCK_FREQUENCY");
-	device_info_ulong(device, CL_DEVICE_MAX_COMPUTE_UNITS, "CL_DEVICE_MAX_COMPUTE_UNITS");
-	device_info_ulong(device, CL_DEVICE_MAX_CONSTANT_ARGS, "CL_DEVICE_MAX_CONSTANT_ARGS");
-	device_info_ulong(device, CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE, "CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE");
-	device_info_uint(device, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, "CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS");
-	device_info_uint(device, CL_DEVICE_MEM_BASE_ADDR_ALIGN, "CL_DEVICE_MEM_BASE_ADDR_ALIGN");
-	device_info_uint(device, CL_DEVICE_MIN_DATA_TYPE_ALIGN_SIZE, "CL_DEVICE_MIN_DATA_TYPE_ALIGN_SIZE");
-	device_info_uint(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_CHAR, "CL_DEVICE_PREFERRED_VECTOR_WIDTH_CHAR");
-	device_info_uint(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_SHORT, "CL_DEVICE_PREFERRED_VECTOR_WIDTH_SHORT");
-	device_info_uint(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_INT, "CL_DEVICE_PREFERRED_VECTOR_WIDTH_INT");
-	device_info_uint(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_LONG, "CL_DEVICE_PREFERRED_VECTOR_WIDTH_LONG");
-	device_info_uint(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_FLOAT, "CL_DEVICE_PREFERRED_VECTOR_WIDTH_FLOAT");
-	device_info_uint(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_DOUBLE, "CL_DEVICE_PREFERRED_VECTOR_WIDTH_DOUBLE");
-
-	{
-		cl_command_queue_properties ccp;
-		clGetDeviceInfo(device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &ccp, NULL);
-		printf("%-40s = %s\n", "Command queue out of order? ", ((ccp & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? "true" : "false"));
-		printf("%-40s = %s\n", "Command queue profiling enabled? ", ((ccp & CL_QUEUE_PROFILING_ENABLE) ? "true" : "false"));
-	}
-}
