@@ -35,10 +35,8 @@ int CLAHE(unsigned char* pImage, unsigned int uiXRes, unsigned int uiYRes, unsig
 	unsigned int uiNrBins, float fCliplimit);
 
 #define gd_afCompFlt(iIPIndx, iSzIndx, iFltIndx)  gd_afCompFlt + ((giTplH * giTplW * giNumIPRot * giNumSz) * iFltIndx) +  ((giTplH * giTplW * giNumIPRot) * iSzIndx) + ((giTplH * giTplW) * iIPIndx)
-#define d_pafWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) d_pafWholeTplFFT + ((giScnH * giScnW * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnH * giScnW * giNumIPInFirst) * iSzIndx) + ((giScnH * giScnW) * iIPAbsIndx)
-#define gd_afWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) gd_afWholeTplFFT + ((giScnH * giScnW * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnH * giScnW * giNumIPInFirst) * iSzIndx) + ((giScnH * giScnW) * iIPAbsIndx)
-#define d_pafWholeTplFFTPad(iIPAbsIndx, iSzIndx, iFltAbsIndx) d_pafWholeTplFFTPad + ((giScnHPad * giScnWPad * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnHPad * giScnWPad * giNumIPInFirst) * iSzIndx) + ((giScnHPad * giScnWPad) * iIPAbsIndx)
-#define gd_afWholeTplFFTPad(iIPAbsIndx, iSzIndx, iFltAbsIndx) gd_afWholeTplFFTPad + ((giScnHPad * giScnWPad * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnHPad * giScnWPad * giNumIPInFirst) * iSzIndx) + ((giScnHPad * giScnWPad) * iIPAbsIndx)
+#define d_pafWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) d_pafWholeTplFFT + ((giScnHPad * giScnWPad * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnHPad * giScnWPad * giNumIPInFirst) * iSzIndx) + ((giScnHPad * giScnWPad) * iIPAbsIndx)
+#define gd_afWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx) gd_afWholeTplFFT + ((giScnHPad * giScnWPad * giNumIPInFirst * giNumSz) * iFltAbsIndx) + ((giScnHPad * giScnWPad * giNumIPInFirst) * iSzIndx) + ((giScnHPad * giScnWPad) * iIPAbsIndx)
 #define d_pafPartTplFFT(iIPIndx, iSzIndx, iFltIndx) d_pafPartTplFFT + ((giTplH * giTplW * giNumIPRot * giNumSz) * iFltIndx) + ((giTplH * giTplW * giNumIPRot) * iSzIndx) + ((giTplH * giTplW) * iIPIndx)
 #define gd_afPartTplFFT(iIPIndx, iSzIndx, iFltIndx) gd_afPartTplFFT + ((giTplH * giTplW * giNumIPRot * giNumSz) * iFltIndx) + ((giTplH * giTplW * giNumIPRot) * iSzIndx) + ((giTplH * giTplW) * iIPIndx)
 ////////////////////////////////////////////////////////////////////////////////
@@ -94,8 +92,9 @@ const int giMaskH = 4;
 const int	giScnSz = giScnW * giScnH;
 const int	giScnSzPad = giScnWPad * giScnHPad;
 const int	giScnMemSzReal = giScnSz * sizeof(cufftReal);
-const int	giScnMemSzRealPad = giScnSzPad * sizeof(cufftReal);
+const int	giScnMemSzRealPad = giScnSzPad * sizeof(cufftReal);//1024*1024
 const int   giScnMemSzCmplx = giScnSz * sizeof(cufftComplex);
+const int   giScnMemSzCmplxPad = giScnSzPad * sizeof(cufftComplex);//1024*1024
 const int   giScnMemSzUChar = giScnSz * sizeof(unsigned char);
 const int	giAreaMemSzReal = giAreaH * giAreaH * sizeof(cufftReal);
 const int	giScnOffset = giScnBegY * giScnW;
@@ -184,6 +183,7 @@ cufftReal
 *gd_afCompFlt,
 *gd_afPadTplIn,
 *gd_afPadScnIn,
+*gd_afPadScnInPad,
 *gd_afCorr;
 
 //typedef float cufftComplex[2];
@@ -191,6 +191,7 @@ cufftComplex
 *gd_afScnPartOut,
 *gd_afPadTplOut,
 *gd_afPadScnOut,
+*gd_afPadScnOutPad,
 *gd_afWholeTplFFT,
 *gd_afPartTplFFT,
 *gd_afMul;
@@ -606,7 +607,7 @@ inline void WrapKerTim(char* sKerName, int iSz)
 void MaxIdx(cufftReal* d_afData, int iSz, int** d_piMaxIdx)
 {
 	int iGDx;
-	if (iSz == giScnSz)// fist pass
+	if (iSz == giScnSzPad)// fist pass
 		iGDx = giWholeMaxGDx; // = (640*480/512*8) = (307200/4096) = 75 - will need two passes 
 	else
 		iGDx = giPartMaxGDx;; // if TplSz = 60, (60*60/512*8)+1 = (3600/4096)+1 = 1 - will only need one pass 
@@ -765,7 +766,7 @@ void PrepTplFFT(cufftReal* gd_afCompFlt, cufftReal** d_pafPadTplIn, cufftComplex
 	//WholeTpls are the MulCompFlts (last flts in the compflt list). They are used in 1st pass. Their size is as big as scn
 	//PartTpls are all other comp flt excluding MulCompFlts. They are used in 2nd pass. Their size is as big as tpl (is not blowed up to scn size)
 	int iWholeMemSz = giScnHPad * giScnWPad * giNumIPInFirst * giNumSz * gstCompFlt.iNumMulCompFlt * sizeof(cufftComplex);
-	CUDA_SAFE_CALL(cudaMalloc((void **)&*d_pafWholeTplFFTPad, iWholeMemSz));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&*d_pafWholeTplFFT, iWholeMemSz));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&d_afPadTplIn, giScnMemSzRealPad));
 	int iPartMemSz = giTplH * giTplW * giNumIPRot * giNumSz * giNumSngCompFlt * sizeof(cufftComplex);
 	CUDA_SAFE_CALL(cudaMalloc((void **)&*d_pafPartTplFFT, iPartMemSz));
@@ -784,7 +785,7 @@ void PrepTplFFT(cufftReal* gd_afCompFlt, cufftReal** d_pafPadTplIn, cufftComplex
 				iFltAbsIndx = iFltIndx - giNumSngCompFlt;
 				iIPAbsIndx = iIPIndx - giBegIdxIPInFirst;
 				printf("iIPIndx=%d iSzIndx=%d iFltIndx=%d d_afPadTplIn= %d\n", iIPIndx, iSzIndx, iFltIndx, d_afPadTplIn);
-				CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)d_afPadTplIn, (cufftComplex *)*d_pafWholeTplFFTPad(iIPAbsIndx, iSzIndx, iFltAbsIndx)));
+				CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)d_afPadTplIn, (cufftComplex *)*d_pafWholeTplFFT(iIPAbsIndx, iSzIndx, iFltAbsIndx)));
 
 			}
 		}
@@ -858,14 +859,14 @@ void getCopyWidthHeight(int iMaxPeakIndx, int* piPartW, int* piPartH)
 {
 	int iMaxPeakRow, iMaxPeakCol;
 	//make sure we are not out of bounds
-	Indx2Coord(giScnW, iMaxPeakIndx, &iMaxPeakRow, &iMaxPeakCol);
+	Indx2Coord(giScnWPad, iMaxPeakIndx, &iMaxPeakRow, &iMaxPeakCol);// converted coord are the same with 640*480 and 1024*1024
 	*piPartW = giTplW;
 	int iEndCol = iMaxPeakCol + *piPartW - 1;
-	if (iEndCol >= giScnW)
+	if (iEndCol >= giScnW && iMaxPeakCol <= giScnW)
 		*piPartW = *piPartW - (iEndCol + 1 - giScnW);
 	*piPartH = giTplH;
 	int iEndRow = iMaxPeakRow + *piPartH - 1;
-	if (iEndRow >= giScnH)
+	if (iEndRow >= giScnH && iMaxPeakRow <= giScnW)
 		*piPartH = *piPartH - (iEndRow + 1 - giScnH);
 }
 
@@ -1194,7 +1195,7 @@ void ssd_fft_gpu_init()
 	{
 		printf("Warning: Max of part scn can not be found in one pass!\n");
 	}
-	giWholeMaxGDx = (giScnSz) % (BLOCKDIMX_MAX*EACHTHREADREADS) > 0 ? ((giScnSz) / (BLOCKDIMX_MAX*EACHTHREADREADS)) + 1 : (giScnSz) / (BLOCKDIMX_MAX*EACHTHREADREADS);
+	giWholeMaxGDx = (giScnSzPad) % (BLOCKDIMX_MAX*EACHTHREADREADS) > 0 ? ((giScnSzPad) / (BLOCKDIMX_MAX*EACHTHREADREADS)) + 1 : (giScnSzPad) / (BLOCKDIMX_MAX*EACHTHREADREADS);
 	if ((giWholeMaxGDx / EACHTHREADREADS) > BLOCKDIMX_MAX)
 	{
 		//in the second pass each thread will read EACHTHREADREADS blockmaxs. There is giWholeMaxGDx blocks at most.
@@ -1216,9 +1217,11 @@ void ssd_fft_gpu_init()
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_ac4Scn, giScnMemSzUChar));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afCompFlt, gstCompFlt.iDataMemSz));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnIn, giScnMemSzReal));
-	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afCorr, giScnMemSzReal));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnInPad, giScnMemSzRealPad));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afCorr, giScnMemSzRealPad));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnOut, giScnMemSzCmplx));
-	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afMul, giScnMemSzCmplx));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afPadScnOutPad, giScnMemSzCmplxPad));
+	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afMul, giScnMemSzCmplxPad));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afScnPartIn, giTplMemSzReal));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&gd_afScnPartOut, giTplMemSzCmplx));
 	CUDA_SAFE_CALL(cudaMalloc((void**)&gd_pfMax, sizeof(cufftReal)));
@@ -1240,7 +1243,7 @@ void ssd_fft_gpu_init()
 	getKernelDims(BLOCKDIMX, giScnSz / 4, &gdThreadsConv, &gdBlocksConv);
 	getKernelDims(BLOCKDIMX, giScnSz / 2, &gdThreadsDead, &gdBlocksDead);
 	gdThreadsDead.x = gdThreadsDead.x + (HALFWARP + 1);
-	getKernelDims(BLOCKDIMX, giScnSz, &gdThreadsWhole, &gdBlocksWhole);
+	getKernelDims(BLOCKDIMX, giScnSzPad, &gdThreadsWhole, &gdBlocksWhole);// for first pass
 	getKernelDims(BLOCKDIMX, giTplSz, &gdThreadsPart, &gdBlocksPart);
 
 	//Creating FFT plan for whole scene
@@ -1420,16 +1423,19 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 #endif
 
 	CpyScnToDevAndPreProcess(acScn, gd_afPadScnIn, gbConGam, bFixDead);
-
+	// pad gd_afPadScnIn to 1024*1024 gd_afPadScnInPad
+	CUDA_SAFE_CALL(cudaMemset(gd_afPadScnInPad, 0, giScnMemSzRealPad));
+	//pad template
+	CUDA_SAFE_CALL(cudaMemcpy2D(gd_afPadScnInPad, (giScnWPad * sizeof(cufftReal)), gd_afPadScnIn, giScnW * sizeof(cufftReal), giScnW * sizeof(cufftReal), giScnH, cudaMemcpyDeviceToDevice));
 	//Running the correlation...
 	InitTim();
 	//take the FFT of the scene
 	InitKerTim(2);
-	CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)gd_afPadScnIn, (cufftComplex *)gd_afPadScnOut));
+	CUFFT_SAFE_CALL(cufftExecR2C(ghFFTplanWholeFwd, (cufftReal *)gd_afPadScnInPad, (cufftComplex *)gd_afPadScnOutPad));
 	WrapKerTim("wholeFFT", 2);
 	//apply kth law to scene
 	InitKerTim(2);
-	kthLaw << <gdBlocksWhole, gdThreadsWhole >> >(gd_afPadScnOut, giScnSz);
+	kthLaw << <gdBlocksWhole, gdThreadsWhole >> >(gd_afPadScnOutPad, giScnSzPad);
 	WrapKerTim("wholeKth", 2);
 	//initialize max PSR value
 	fMaxPSR = INT_MIN;
@@ -1445,7 +1451,7 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 				//I am not initializing gh_afArea. make sure you reach right coords.
 				getWholeTplFFT(gd_afCompFlt, iIPIndx, iSzIndx, iFltIndx, gd_afPadTplIn, &gd_afPadTplOut, ghFFTplanWholeFwd, gd_afWholeTplFFT);
 				//perform correlation
-				Corr(gd_afPadTplOut, gdBlocksWhole, gdThreadsWhole, gd_afPadScnOut, giScnSz, gd_afMul, ghFFTplanWholeInv, gd_afCorr, gh_afArea, &iPeakIndx, &fPSR, giScnW, giScnH);
+				Corr(gd_afPadTplOut, gdBlocksWhole, gdThreadsWhole, gd_afPadScnOutPad, giScnSzPad, gd_afMul, ghFFTplanWholeInv, gd_afCorr, gh_afArea, &iPeakIndx, &fPSR, giScnWPad, giScnHPad);
 				//printf("PSR value for MulCompFlt: %f (iFltIndx = %d IPAng = %d, Sz = %d)\n", fPSR, iFltIndx, gstCompFlt.aiIPAngs[iIPIndx], gstCompFlt.aiTplCols[iSzIndx]);
 				if (fPSR > fMaxPSR)
 				{
@@ -1481,12 +1487,13 @@ void BestTpl(unsigned char* acScn, int* piMaxPeakIndx, int* piPartW, int* piPart
 	//copy template-size portion of the scene starting at peak point
 	//	CUDA_SAFE_CALL( cudaMemcpy2D( gd_afScnPartIn, giTplWMemSz, gd_afPadScnIn+iMaxPeakIndx, giScnW*sizeof(cufftReal), giTplWMemSz, giTplH , cudaMemcpyDeviceToDevice ));
 	getCopyWidthHeight(*piMaxPeakIndx, piPartW, piPartH);
+	int ConvertPeakIndx = *piMaxPeakIndx % 1024 + (*piMaxPeakIndx / 1024) * 640;//***
 	iPartWMemSz = *piPartW * sizeof(cufftReal);
 	//make sure you initialize gd_afScnPartIn with zeros before processing each frame (if we are out of bounds, we will have a part image padded with zeros)
 	InitKerTim(3);
 	CUDA_SAFE_CALL(cudaMemset(gd_afScnPartIn, 0, giTplMemSzReal));
 	//copy the part where PSR is highest in the first pass
-	CUDA_SAFE_CALL(cudaMemcpy2D(gd_afScnPartIn, giTplWMemSz, gd_afPadScnIn + *piMaxPeakIndx, giScnW * sizeof(cufftReal), iPartWMemSz, *piPartH, cudaMemcpyDeviceToDevice));
+	CUDA_SAFE_CALL(cudaMemcpy2D(gd_afScnPartIn, giTplWMemSz, gd_afPadScnIn + ConvertPeakIndx, giScnW * sizeof(cufftReal), iPartWMemSz, *piPartH, cudaMemcpyDeviceToDevice));
 	WrapKerTim("MemcpyD2DPart", 3);
 	//take the FFT of the scene
 	InitKerTim(3);
@@ -1607,10 +1614,12 @@ void ssd_fft_gpu_exit() {
 	CUFFT_SAFE_CALL(cufftDestroy(ghFFTplanPartInv));
 	CUDA_SAFE_CALL(cudaFree(gd_ac4Scn));
 	CUDA_SAFE_CALL(cudaFree(gd_afPadScnIn));
+	CUDA_SAFE_CALL(cudaFree(gd_afPadScnInPad));
 	CUDA_SAFE_CALL(cudaFree(gd_afScnPartIn));
 	CUDA_SAFE_CALL(cudaFree(gd_afScnPartOut));
 	CUDA_SAFE_CALL(cudaFree(gd_afCompFlt));
 	CUDA_SAFE_CALL(cudaFree(gd_afPadScnOut));
+	CUDA_SAFE_CALL(cudaFree(gd_afPadScnOutPad));
 	CUDA_SAFE_CALL(cudaFree(gd_afCorr));
 	CUDA_SAFE_CALL(cudaFree(gd_afMul));
 	CUDA_SAFE_CALL(cudaFree(gd_pfMax));
